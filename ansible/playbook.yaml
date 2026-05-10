@@ -1,0 +1,47 @@
+- hosts: rockey8
+  become: yes
+
+  tasks:
+    - name: Podmanインストール
+      dnf:
+        name: podman
+        state: present
+
+    - name: LAMP用ディレクトリ作成
+      file:
+        path: /opt/containers
+        state: directory
+
+    - name: MySQLコンテナ起動
+      containers.podman.podman_container:
+        name: mysql
+        image: docker.io/library/mysql:8.0
+        state: started
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: testdb
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        ports:
+          - "3306:3306"
+        volumes:
+          - /opt/containers/mysql:/var/lib/mysql
+
+    - name: Webコンテナ起動
+      containers.podman.podman_container:
+        name: web
+        image: docker.io/library/php:8.2-apache
+        state: started
+        ports:
+          - "80:80"
+        volumes:
+          - /opt/containers/html:/var/www/html
+
+    - name: pod作成
+      containers.podman.podman_pod:
+        name: lamp-pod
+        state: created
+        ports:
+          - "80:80"
+          - "3306:3306"
+        pod: lamp-pod

@@ -1,0 +1,92 @@
+- hosts: lamp
+
+  vars:
+    app_user: vboxuser
+    base_dir: "/home/{{ app_user }}/containers"
+
+  tasks:
+    - name: Podmanインストール
+      become: yes
+      dnf:
+        name: podman
+        state: present
+
+    - name: ユーザーディレクトリ作成
+      become: yes
+      file:
+        path: "{{ base_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+
+    - name: MySQL用ディレクトリ
+      become: yes
+      file:
+        path: "{{ base_dir }}/mysql"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+
+    - name: Web用ディレクトリ
+      become: yes
+      file:
+        path: "{{ base_dir }}/html"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+
+    - name: pod作成（rootless）
+      become: no
+      become_user: "{{ app_user }}"
+      containers.podman.podman_pod:
+        name: lamp-pod
+        state: created
+        ports:
+          - "8080:80"
+          - "3306:3306"
+
+    - name: MySQLコンテナ起動
+      become: no
+      become_user: "{{ app_user }}"
+      containers.podman.podman_container:
+        name: mysql
+        image: docker.io/library/mysql:8.0
+        state: started
+        pod: lamp-pod
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: testdb
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        volumes:
+          - "{{ base_dir }}/mysql:/var/lib/mysql"
+
+    - name: Webコンテナ起動
+      become: no
+      become_user: "{{ app_user }}"
+      containers.podman.podman_container:
+        name: web
+        #        image: docker.io/library/php:8.2-apache
+        image: my-php
+        state: started
+        pod: lamp-pod
+        volumes:
+          - "{{ base_dir }}/html:/var/www/html"
+
+    - name: firewalld起動
+      become: yes
+      service:
+        name: firewalld
+        state: started
+        enabled: yes
+
+    - name: 8080ポート開放
+      become: yes
+      ansible.posix.firewalld:
+        port: 8080/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes

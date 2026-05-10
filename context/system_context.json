@@ -1,0 +1,32 @@
+{
+  "development": {
+    "os": "Windows11",
+    "editor": "VSCode",
+    "connection": "Remote SSH"
+  },
+  "control_node": {
+    "hostname": "asbsvr",
+    "role": "Ansible Control Node"
+  },
+  "execution_node": {
+    "hostname": "rockey8",
+    "role": "Podman Execution Server"
+  },
+  "container_runtime": "Podman",
+  "pod": {
+    "name": "lamp-pod"
+  },
+  "containers": {
+    "web": {
+      "name": "web",
+      "image": "php:8.2-apache",
+      "port": 8080,
+      "document_root": "/home/vboxuser/containers/html"
+    },
+    "mysql": {
+      "name": "mysql",
+      "image": "mysql:8.0",
+      "database": "testdb"
+    }
+  }
+}
