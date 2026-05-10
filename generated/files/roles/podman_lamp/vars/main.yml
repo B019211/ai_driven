@@ -1,0 +1,10 @@
+---
+pod_name: lamp-pod
+web_container_name: web
+mysql_container_name: mysql
+web_image: php:8.2-apache
+mysql_image: mysql:8.0
+web_port_host: 8080
+web_port_container: 80
+mysql_data_path: /home/vboxuser/containers/mysql_data
+app_document_root_container: /var/www/html

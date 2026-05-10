@@ -1,0 +1,7 @@
+---
+- name: Deploy LAMP application with Podman
+  hosts: execution_node
+  become: yes
+  roles:
+    - lamp_app
+    - podman_lamp

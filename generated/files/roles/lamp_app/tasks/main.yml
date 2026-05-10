@@ -1,0 +1,16 @@
+---
+- name: Ensure document root directory exists
+  ansible.builtin.file:
+    path: "{{ app_document_root }}"
+    state: directory
+    owner: vboxuser
+    group: vboxuser
+    mode: '0755'
+
+- name: Deploy PHP application file
+  ansible.builtin.template:
+    src: index.php.j2
+    dest: "{{ app_document_root }}/index.php"
+    owner: vboxuser
+    group: vboxuser
+    mode: '0644'
