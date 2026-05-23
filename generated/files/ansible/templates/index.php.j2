@@ -1,0 +1,54 @@
+<?php
+// PHP only, No framework, PDO mandatory
+
+$dbHost = getenv('DB_HOST') ?: 'mysql';
+$dbName = getenv('DB_NAME') ?: 'testdb';
+$dbUser = getenv('DB_USER') ?: 'appuser';
+$dbPass = getenv('DB_PASS') ?: 'APP_USER_PASSWORD'; // 環境変数がない場合のフォールバック
+
+try {
+    $dsn = "mysql:host=$dbHost;dbname=$dbName;charset=utf8mb4";
+    $pdo = new PDO($dsn, $dbUser, $dbPass, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+    ]);
+
+    echo "<h1>LAMP Pod Test Application</h1>";
+    echo "<p>Successfully connected to MySQL database: <strong>$dbName</strong> on host: <strong>$dbHost</strong></p>";
+
+    // Example: Insert a message
+    if (isset($_POST['message']) && !empty($_POST['message'])) {
+        $stmt = $pdo->prepare("INSERT INTO messages (message) VALUES (?)");
+        $stmt->execute([$_POST['message']]);
+        echo "<p style='color: green;'>Message added successfully!</p>";
+    }
+
+    // Example: Fetch and display messages
+    $stmt = $pdo->query("SELECT id, message, created_at FROM messages ORDER BY created_at DESC");
+    $messages = $stmt->fetchAll();
+
+    echo "<h2>Messages:</h2>";
+    echo "<form method='post'>";
+    echo "<input type='text' name='message' placeholder='Enter a message' required>";
+    echo "<button type='submit'>Add Message</button>";
+    echo "</form>";
+
+    if (count($messages) > 0) {
+        echo "<table border='1' cellpadding='5' cellspacing='0'>";
+        echo "<thead><tr><th>ID</th><th>Message</th><th>Created At</th></tr></thead>";
+        echo "<tbody>";
+        foreach ($messages as $msg) {
+            echo "<tr><td>" . htmlspecialchars($msg['id']) . "</td><td>" . htmlspecialchars($msg['message']) . "</td><td>" . htmlspecialchars($msg['created_at']) . "</td></tr>";
+        }
+        echo "</tbody>";
+        echo "</table>";
+    } else {
+        echo "<p>No messages yet. Add one!</p>";
+    }
+
+} catch (PDOException $e) {
+    echo "<h1>Database Connection Error!</h1>";
+    echo "<p>Error: " . htmlspecialchars($e->getMessage()) . "</p>";
+}
+?>

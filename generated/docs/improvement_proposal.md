@@ -1,55 +1,32 @@
 {
-  "summary": "現在のAI DevOps構成を改善し、Podman上でLAMPアプリケーションを展開するための包括的なAnsibleプレイブックを提供します。このソリューションは、Ansibleの役割を活用して、Podman pod、MySQLおよびWebコンテナ、必要なボリュームの作成を調整し、PDOを使用してデータベースと対話するシンプルなPHPアプリケーションをデプロイします。これにより、インフラストラクチャとアプリケーションのデプロイが自動化され、堅牢性と再現性が向上します。",
+  "summary": "現在のAI DevOpsアーキテクチャを改善し、AnsibleとPodmanを使用した完全なLAMPスタックの自動デプロイメントを提供します。これには、アプリケーションコード、データベース初期化スクリプト、およびPodman Pod内のWebコンテナとMySQLコンテナのオーケストレーションが含まれます。これにより、開発環境から実行環境へのデプロイメントが統一され、反復可能なプロセスになります。",
   "files": [
     {
-      "path": "ansible.cfg",
-      "content": "[defaults]\ninventory = ./inventory.ini\nremote_user = vboxuser\nprivate_key_file = ~/.ssh/id_rsa\nhost_key_checking = False"
+      "path": "ansible/hosts.ini",
+      "content": "[control_node]\nasbsvr\n\n[execution_node]\nrockey8 ansible_user=vboxuser\n"
     },
     {
-      "path": "inventory.ini",
-      "content": "[control_node]\nasbsvr\n\n[execution_node]\nrockey8 ansible_host=<rockey8_ip_or_hostname> ansible_user=vboxuser"
+      "path": "ansible/deploy_lamp.yml",
+      "content": "---\n- name: Deploy LAMP Podman stack\n  hosts: execution_node\n  become: yes\n  vars:\n    app_dir: \"/home/vboxuser/containers/html\"\n    mysql_data_dir: \"/home/vboxuser/containers/mysql_data\"\n    web_container_port: 8080\n    mysql_root_password: \"SUPER_SECRET_ROOT_PASSWORD\" # 本番環境ではAnsible Vaultを使用してください\n    mysql_database: \"testdb\"\n    mysql_user: \"appuser\"\n    mysql_password: \"APP_USER_PASSWORD\" # 本番環境ではAnsible Vaultを使用してください\n  tasks:\n    - name: Ensure application directory exists\n      ansible.builtin.file:\n        path: \"{{ app_dir }}\"\n        state: directory\n        owner: vboxuser\n        group: vboxuser\n        mode: '0755'\n\n    - name: Ensure MySQL data directory exists for persistence\n      ansible.builtin.file:\n        path: \"{{ mysql_data_dir }}\"\n        state: directory\n        owner: vboxuser\n        group: vboxuser\n        mode: '0755'\n\n    - name: Copy PHP application files\n      ansible.builtin.template:\n        src: templates/index.php.j2\n        dest: \"{{ app_dir }}/index.php\"\n        owner: vboxuser\n        group: vboxuser\n        mode: '0644'\n\n    - name: Copy MySQL initialization script\n      ansible.builtin.copy:\n        src: files/init.sql\n        dest: \"{{ app_dir }}/init.sql\" # Docker entrypoint initdb.d にマウントするために一時的に配置\n        owner: vboxuser\n        group: vboxuser\n        mode: '0644'\n\n    - name: Stop and remove existing lamp-pod if it exists\n      community.general.podman_pod:\n        name: lamp-pod\n        state: absent\n      ignore_errors: yes # Podが存在しない場合のエラーを無視\n\n    - name: Create Podman pod 'lamp-pod'\n      community.general.podman_pod:\n        name: lamp-pod\n        state: present\n        publish_ports:\n          - \"{{ web_container_port }}:80\" # ホストポート:コンテナポートでPodを公開\n\n    - name: Run mysql container in lamp-pod\n      community.general.podman_container:\n        name: mysql\n        image: mysql:8.0\n        state: started\n        pod: lamp-pod\n        env:\n          MYSQL_ROOT_PASSWORD: \"{{ mysql_root_password }}\"\n          MYSQL_DATABASE: \"{{ mysql_database }}\"\n          MYSQL_USER: \"{{ mysql_user }}\"\n          MYSQL_PASSWORD: \"{{ mysql_password }}\"\n        volumes:\n          - \"{{ mysql_data_dir }}:/var/lib/mysql\" # データの永続化\n          - \"{{ app_dir }}/init.sql:/docker-entrypoint-initdb.d/init.sql:ro\" # 初期化スクリプトを実行\n\n    - name: Run web container in lamp-pod\n      community.general.podman_container:\n        name: web\n        image: php:8.2-apache\n        state: started\n        pod: lamp-pod\n        volumes:\n          - \"{{ app_dir }}:/var/www/html:Z\" # ドキュメントルートをバインドマウント、:ZはSELinuxコンテキスト用\n        env:\n          DB_HOST: \"mysql\" # Pod内のサービス名\n          DB_NAME: \"{{ mysql_database }}\"\n          DB_USER: \"{{ mysql_user }}\"\n          DB_PASS: \"{{ mysql_password }}\"\n\n    - name: Remove temporary MySQL initialization script\n      ansible.builtin.file:\n        path: \"{{ app_dir }}/init.sql\"\n        state: absent\n\n    - name: Verify application is running\n      ansible.builtin.uri:\n        url: \"http://rockey8:{{ web_container_port }}\"\n        status_code: 200\n        timeout: 60 # MySQLの起動を考慮しタイムアウトを長く設定\n"
     },
     {
-      "path": "playbook.yml",
-      "content": "---\n- name: Deploy LAMP application with Podman\n  hosts: execution_node\n  become: yes\n  roles:\n    - lamp_app\n    - podman_lamp"
+      "path": "ansible/templates/index.php.j2",
+      "content": "<?php\n// PHP only, No framework, PDO mandatory\n\n$dbHost = getenv('DB_HOST') ?: 'mysql';\n$dbName = getenv('DB_NAME') ?: 'testdb';\n$dbUser = getenv('DB_USER') ?: 'appuser';\n$dbPass = getenv('DB_PASS') ?: 'APP_USER_PASSWORD'; // 環境変数がない場合のフォールバック\n\ntry {\n    $dsn = \"mysql:host=$dbHost;dbname=$dbName;charset=utf8mb4\";\n    $pdo = new PDO($dsn, $dbUser, $dbPass, [\n        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,\n        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,\n        PDO::ATTR_EMULATE_PREPARES => false,\n    ]);\n\n    echo \"<h1>LAMP Pod Test Application</h1>\";\n    echo \"<p>Successfully connected to MySQL database: <strong>$dbName</strong> on host: <strong>$dbHost</strong></p>\";\n\n    // Example: Insert a message\n    if (isset($_POST['message']) && !empty($_POST['message'])) {\n        $stmt = $pdo->prepare(\"INSERT INTO messages (message) VALUES (?)\");\n        $stmt->execute([$_POST['message']]);\n        echo \"<p style='color: green;'>Message added successfully!</p>\";\n    }\n\n    // Example: Fetch and display messages\n    $stmt = $pdo->query(\"SELECT id, message, created_at FROM messages ORDER BY created_at DESC\");\n    $messages = $stmt->fetchAll();\n\n    echo \"<h2>Messages:</h2>\";\n    echo \"<form method='post'>\";\n    echo \"<input type='text' name='message' placeholder='Enter a message' required>\";\n    echo \"<button type='submit'>Add Message</button>\";\n    echo \"</form>\";\n\n    if (count($messages) > 0) {\n        echo \"<table border='1' cellpadding='5' cellspacing='0'>\";\n        echo \"<thead><tr><th>ID</th><th>Message</th><th>Created At</th></tr></thead>\";\n        echo \"<tbody>\";\n        foreach ($messages as $msg) {\n            echo \"<tr><td>\" . htmlspecialchars($msg['id']) . \"</td><td>\" . htmlspecialchars($msg['message']) . \"</td><td>\" . htmlspecialchars($msg['created_at']) . \"</td></tr>\";\n        }\n        echo \"</tbody>\";\n        echo \"</table>\";\n    } else {\n        echo \"<p>No messages yet. Add one!</p>\";\n    }\n\n} catch (PDOException $e) {\n    echo \"<h1>Database Connection Error!</h1>\";\n    echo \"<p>Error: \" . htmlspecialchars($e->getMessage()) . \"</p>\";\n}\n?>"
     },
     {
-      "path": "roles/lamp_app/vars/main.yml",
-      "content": "---\napp_document_root: /home/vboxuser/containers/html\nmysql_db_name: testdb\nmysql_user: appuser\nmysql_password: securepassword\nmysql_root_password: verysecure"
-    },
-    {
-      "path": "roles/lamp_app/tasks/main.yml",
-      "content": "---\n- name: Ensure document root directory exists\n  ansible.builtin.file:\n    path: \"{{ app_document_root }}\"\n    state: directory\n    owner: vboxuser\n    group: vboxuser\n    mode: '0755'\n\n- name: Deploy PHP application file\n  ansible.builtin.template:\n    src: index.php.j2\n    dest: \"{{ app_document_root }}/index.php\"\n    owner: vboxuser\n    group: vboxuser\n    mode: '0644'"
-    },
-    {
-      "path": "roles/lamp_app/templates/index.php.j2",
-      "content": "<?php\n$host = 'mysql'; // Container name within the pod\n$db = '{{ mysql_db_name }}';\n$user = '{{ mysql_user }}';\n$pass = '{{ mysql_password }}';\n$charset = 'utf8mb4';\n\n$dsn = \"mysql:host=$host;dbname=$db;charset=$charset\";\n$options = [\n    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,\n    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,\n    PDO::ATTR_EMULATE_PREPARES   => false,\n];\n\ntry {\n    $pdo = new PDO($dsn, $user, $pass, $options);\n    echo \"<h1>LAMP Application</h1>\";\n    echo \"<p>Successfully connected to MySQL database: $db</p>\";\n\n    // Create a simple table if it doesn't exist\n    $pdo->exec(\"CREATE TABLE IF NOT EXISTS messages (\n        id INT AUTO_INCREMENT PRIMARY KEY,\n        message VARCHAR(255) NOT NULL,\n        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n    )\");\n    echo \"<p>Table 'messages' ensured.</p>\";\n\n    // Insert a new message if the table is empty\n    $stmt = $pdo->query(\"SELECT COUNT(*) FROM messages\");\n    if ($stmt->fetchColumn() == 0) {\n        $pdo->exec(\"INSERT INTO messages (message) VALUES ('Hello from PHP and MySQL!')\");\n        echo \"<p>Initial message inserted.</p>\";\n    }\n\n    // Fetch and display messages\n    $stmt = $pdo->query(\"SELECT id, message, created_at FROM messages ORDER BY created_at DESC\");\n    echo \"<h2>Messages:</h2>\";\n    echo \"<ul>\";\n    while ($row = $stmt->fetch()) {\n        echo \"<li>ID: {$row['id']}, Message: {$row['message']}, Created At: {$row['created_at']}</li>\";\n    }\n    echo \"</ul>\";\n\n} catch (\\PDOException $e) {\n    echo \"<h1>Database Connection Error</h1>\";\n    echo \"<p>Error: \" . $e->getMessage() . \"</p>\";\n    // throw new \\PDOException($e->getMessage(), (int)$e->getCode());\n}\n?>"
-    },
-    {
-      "path": "roles/podman_lamp/vars/main.yml",
-      "content": "---\npod_name: lamp-pod\nweb_container_name: web\nmysql_container_name: mysql\nweb_image: php:8.2-apache\nmysql_image: mysql:8.0\nweb_port_host: 8080\nweb_port_container: 80\nmysql_data_path: /home/vboxuser/containers/mysql_data\napp_document_root_container: /var/www/html"
-    },
-    {
-      "path": "roles/podman_lamp/tasks/main.yml",
-      "content": "---\n- name: Ensure Podman is installed (optional, assuming pre-installed)\n  ansible.builtin.package:\n    name: podman\n    state: present\n\n- name: Ensure MySQL data directory exists\n  ansible.builtin.file:\n    path: \"{{ mysql_data_path }}\"\n    state: directory\n    owner: vboxuser\n    group: vboxuser\n    mode: '0755'\n\n- name: Ensure lamp-pod is present\n  community.general.podman_pod:\n    name: \"{{ pod_name }}\"\n    state: present\n\n- name: Create mysql container in lamp-pod\n  community.general.podman_container:\n    name: \"{{ mysql_container_name }}\"\n    image: \"{{ mysql_image }}\"\n    pod: \"{{ pod_name }}\"\n    state: started\n    recreate: yes\n    env:\n      MYSQL_ROOT_PASSWORD: \"{{ mysql_root_password }}\"\n      MYSQL_DATABASE: \"{{ mysql_db_name }}\"\n      MYSQL_USER: \"{{ mysql_user }}\"\n      MYSQL_PASSWORD: \"{{ mysql_password }}\"\n    volume:\n      - \"{{ mysql_data_path }}:/var/lib/mysql:Z\"\n\n- name: Create web container in lamp-pod\n  community.general.podman_container:\n    name: \"{{ web_container_name }}\"\n    image: \"{{ web_image }}\"\n    pod: \"{{ pod_name }}\"\n    state: started\n    recreate: yes\n    ports:\n      - \"{{ web_port_host }}:{{ web_port_container }}\"\n    volume:\n      - \"{{ app_document_root }}:{{ app_document_root_container }}:ro,Z\""
+      "path": "ansible/files/init.sql",
+      "content": "-- Create the testdb database if it doesn't exist\nCREATE DATABASE IF NOT EXISTS testdb;\n\n-- Use the testdb database\nUSE testdb;\n\n-- Create a table for messages if it doesn't exist\nCREATE TABLE IF NOT EXISTS messages (\n    id INT AUTO_INCREMENT PRIMARY KEY,\n    message VARCHAR(255) NOT NULL,\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n\n-- Insert some initial data\nINSERT INTO messages (message) VALUES ('Hello from the LAMP pod!');\nINSERT INTO messages (message) VALUES ('This is an initial message.');\n"
     }
   ],
   "commands": [
-    "ssh vboxuser@asbsvr",
-    "cd /path/to/ansible_project_root",
-    "ansible-playbook -i inventory.ini playbook.yml",
-    "ssh vboxuser@rockey8",
-    "podman pod ps",
-    "podman ps -a",
-    "echo \"Access the web application at http://<rockey8_ip_or_hostname>:8080\""
+    "ansible-playbook -i ansible/hosts.ini ansible/deploy_lamp.yml"
   ],
   "risks": [
-    "Security: Ansible変数内で機密情報（例: MySQLパスワード）がハードコードされています。本番環境ではAnsible Vaultなどのツールを使用して保護することを強く推奨します。",
-    "Security: WebアプリケーションにHTTPSが設定されておらず、通信中のデータが傍受されるリスクがあります。",
-    "Security: `ansible.cfg`で`host_key_checking = False`が設定されており、Man-in-the-Middle攻撃のリスクがあります。本番環境では厳格なホストキーチェックを有効にするべきです。",
-    "Persistence: MySQLデータにはボリュームが使用されていますが、バックアップ戦略が実装されていません。",
-    "Reliability: コンテナやアプリケーションのヘルスチェック、監視、ロギングソリューションが不足しています。",
-    "Reliability: アプリケーションとデータベースは単一インスタンスであり、高可用性や負荷分散が考慮されていません。",
-    "Deployment: `podman_container`の`recreate: yes`は、設定やイメージの更新時にコンテナを再作成しますが、データベースコンテナの場合、データボリュームの扱いに注意しないと意図しないデータ損失のリスクがあります。"
+    "データベースのパスワードがAnsible playbookの変数にハードコードされています。本番環境ではAnsible Vaultを使用して保護する必要があります。",
+    "コンテナ内のアプリケーションに対するヘルスチェック（例: PHPアプリケーションが正しく動作しているかのチェック）が不足しています。",
+    "デプロイ失敗時の自動ロールバック戦略がありません。",
+    "Podmanコンテナの初回起動時にMySQLが完全に初期化される前にWebコンテナがMySQLに接続を試みる可能性があります。これは`uri`モジュールの`timeout`で一部緩和されますが、より堅牢な起動順序制御や待機メカニズムが望ましいです。",
+    "SELinuxが有効な環境では、ボリュームマウントの`:Z`オプションが重要ですが、環境によっては追加のSELinuxポリシー調整が必要になる場合があります。",
+    "Webコンテナの公開ポート8080が、実行ノード（rockey8）で既に使用されている場合、ポート衝突が発生します。"
   ]
 }

@@ -1,0 +1,91 @@
+- name: Deploy LAMP Pod with Podman
+  hosts: execution_nodes
+  become: true
+  vars:
+    app_root_dir: /home/vboxuser/containers
+    html_dir: "{{ app_root_dir }}/html"
+    pod_name: lamp-pod
+    web_container_name: web
+    mysql_container_name: mysql
+    db_name: testdb
+    db_root_password: "supersecurepassword" # IMPORTANT: Use Ansible Vault for production!
+    db_user: "app_user"
+    db_password: "anothersecurepassword" # IMPORTANT: Use Ansible Vault for production!
+
+  tasks:
+    - name: Ensure Podman is installed (if not already)
+      ansible.builtin.package:
+        name: podman
+        state: present
+
+    - name: Create application root directory
+      ansible.builtin.file:
+        path: "{{ app_root_dir }}"
+        state: directory
+        owner: vboxuser
+        group: vboxuser
+        mode: '0755'
+
+    - name: Create HTML document root directory
+      ansible.builtin.file:
+        path: "{{ html_dir }}"
+        state: directory
+        owner: vboxuser
+        group: vboxuser
+        mode: '0755'
+
+    - name: Copy PHP application files
+      ansible.builtin.copy:
+        src: ../html/
+        dest: "{{ html_dir }}/"
+        owner: vboxuser
+        group: vboxuser
+        mode: '0644'
+      notify: Restart web container
+
+    - name: Ensure podman pod exists and is running
+      community.general.podman_pod:
+        name: "{{ pod_name }}"
+        state: started
+        publish:
+          - "8080:80" # Map host port 8080 to pod port 80
+
+    - name: Run MySQL container in pod
+      community.general.podman_container:
+        name: "{{ mysql_container_name }}"
+        image: mysql:8.0
+        pod: "{{ pod_name }}"
+        env:
+          MYSQL_ROOT_PASSWORD: "{{ db_root_password }}"
+          MYSQL_DATABASE: "{{ db_name }}"
+          MYSQL_USER: "{{ db_user }}"
+          MYSQL_PASSWORD: "{{ db_password }}"
+        state: started
+        recreate: true # Ensure changes are applied on re-run
+        # Optional: For persistent data, uncomment and configure a host path
+        # volume:
+        #   - "{{ app_root_dir }}/mysql_data:/var/lib/mysql:Z"
+
+    - name: Run web (PHP Apache) container in pod
+      community.general.podman_container:
+        name: "{{ web_container_name }}"
+        image: php:8.2-apache
+        pod: "{{ pod_name }}"
+        ports:
+          - "80:80" # The web server inside the container listens on port 80, mapped to the pod's port
+        volume:
+          - "{{ html_dir }}:/var/www/html:Z" # Mount application code, :Z for selinux context
+        env:
+          DB_HOST: "{{ mysql_container_name }}" # Container name resolves within the pod network
+          DB_NAME: "{{ db_name }}"
+          DB_USER: "{{ db_user }}"
+          DB_PASSWORD: "{{ db_password }}"
+        state: started
+        recreate: true # Ensure changes are applied on re-run
+
+  handlers:
+    - name: Restart web container
+      community.general.podman_container:
+        name: "{{ web_container_name }}"
+        state: restarted
+        pod: "{{ pod_name }}"

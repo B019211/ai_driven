@@ -1,68 +1,51 @@
-# AI DevOps Project
+# AI DevOps Pipeline
 
-## Overview
+AIを利用して、
 
-AI-driven LAMP development environment using:
+- インフラ構成生成
+- Ansible生成
+- Podman構成生成
+- PHPアプリ生成
+- セキュリティレビュー
+- 自動修正（予定）
 
-- Windows11
-- VSCode Remote SSH
-- Ansible
-- Rocky Linux 8
-- Podman
-- PHP
-- MySQL
-- Gemini API
+を行う AI駆動 DevOps パイプラインです。
 
 ---
 
-## Architecture
+# 概要
 
-See:
+このプロジェクトは Gemini API を利用し、
+AIによる Infrastructure as Code 自動生成を目的としています。
 
-- context/architecture.md
+現在は以下を実装済みです。
 
----
-
-## System Rules
-
-See:
-
-- context/system_rules.md
-
----
-
-## Deployment
-
-See:
-
-- ansible/playbook.yaml
+- Architecture Context 読み込み
+- Rule Context 読み込み
+- Gemini による JSON生成
+- 生成結果の JSON parse
+- ファイル自動生成
+- Reviewer AI によるセキュリティレビュー
+- Review Result 出力
 
 ---
 
-## Logs
-
-See:
-
-- logs/ai_run.log
-
----
-
-## AI Pipeline
-
-Main pipeline:
-
-- pipeline/ai_pipeline.py
-
----
-
-## Directory Structure
+# 現在の構成
 
 ```text
-agents/     AI agents
-context/    system knowledge
-generated/  AI generated artifacts
-logs/       logs
-pipeline/   execution pipeline
-prompts/    AI prompts
-ansible/    deployment files
+context/
+ ├ architecture.md
+ ├ system_rules.md
+ ├ reviewer_rules.md
+ └ output_format.md
+
+pipeline/
+ └ ai_pipeline.py
+
+generated/
+ ├ runtime/
+ ├ files/
+ └ reports/
+
+logs/
 ```
