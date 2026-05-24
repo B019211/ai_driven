@@ -2,106 +2,189 @@ from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime
 
-import google.generativeai as genai
-import os
+from google import genai
+from google.genai import types
+
+from json_repair import repair_json
+
+import base64
 import json
+import os
 import re
 import time
 
+
+# =========================================================
+# Constants
+# =========================================================
+
 BLOCKING_SEVERITIES = ["BLOCKER", "HIGH"]
 
-# -----------------------------------
+MAX_RETRY = 3
+
+SAFE_ROOT = Path("generated/files").resolve()
+
+MODEL_NAME = "gemini-2.5-flash"
+
+
+# =========================================================
 # Utility
-# -----------------------------------
+# =========================================================
 
-def extract_json(text):
+def extract_json(text: str) -> str:
+    """
+    AIレスポンスからJSON部分のみ抽出
+    """
 
-    match = re.search(
-        r"\{.*\}",
-        text,
-        re.DOTALL
+    text = text.strip()
+
+    text = re.sub(r"^```json\s*", "", text)
+    text = re.sub(r"^```\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+
+    text = text.strip()
+
+    obj_start = text.find("{")
+    arr_start = text.find("[")
+
+    candidates = [
+        x for x in [obj_start, arr_start]
+        if x != -1
+    ]
+
+    if not candidates:
+        raise ValueError("JSON start not found")
+
+    start = min(candidates)
+
+    if text[start] == "{":
+        end = text.rfind("}")
+    else:
+        end = text.rfind("]")
+
+    if end == -1:
+        raise ValueError("JSON end not found")
+
+    return text[start:end + 1]
+
+
+def sanitize_json_string(text: str) -> str:
+    """
+    JSONとして不正なバックスラッシュを修正
+    """
+
+    text = re.sub(
+        r'\\(?!["\\/bfnrtu])',
+        r'\\\\',
+        text
     )
 
-    if not match:
-        raise ValueError(
-            "JSON not found in response"
+    return text
+
+
+def safe_json_loads(text: str) -> dict:
+    """
+    壊れたJSONを安全に読み込む
+    """
+
+    try:
+        return json.loads(text)
+
+    except json.JSONDecodeError:
+
+        repaired = repair_json(text)
+
+        repaired = sanitize_json_string(
+            repaired
         )
 
-    return match.group(0)
+        return json.loads(repaired)
 
-# -----------------------------------
-# Load ENV
-# -----------------------------------
+
+def encode_b64(content: str) -> str:
+    return base64.b64encode(
+        content.encode("utf-8")
+    ).decode("utf-8")
+
+
+def decode_b64(content: str) -> str:
+    return base64.b64decode(
+        content.encode("utf-8")
+    ).decode("utf-8")
+
+
+def safe_write_file(
+    root: Path,
+    relative_path: str,
+    content: str
+):
+    """
+    path traversal防御付きファイル保存
+    """
+
+    resolved = (
+        root / relative_path
+    ).resolve()
+
+    if not str(resolved).startswith(
+        str(root.resolve())
+    ):
+        raise ValueError(
+            f"Path traversal detected: {relative_path}"
+        )
+
+    resolved.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    resolved.write_text(
+        content,
+        encoding="utf-8"
+    )
+
+    print(f"Generated: {resolved}")
+
+
+def log_text(path: Path, text: str):
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    path.write_text(
+        text,
+        encoding="utf-8"
+    )
+
+
+# =========================================================
+# ENV
+# =========================================================
 
 load_dotenv()
 
 api_key = os.getenv("GEMINI_API_KEY")
 
 if not api_key:
-    raise ValueError("GEMINI_API_KEY not found")
+    raise RuntimeError(
+        "GEMINI_API_KEY not found"
+    )
 
-# -----------------------------------
-# Gemini Setup
-# -----------------------------------
 
-genai.configure(api_key=api_key)
+# =========================================================
+# Gemini Client
+# =========================================================
 
-generator_model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
-    generation_config={
-        "temperature": 0.7
-    },
-    system_instruction="""
-あなたは熟練のソフトウェアエンジニアです。
-
-要件を満たす実装を生成してください。
-
-重要:
-- JSONのみ返却
-- 説明文禁止
-- 本番運用を意識
-"""
+client = genai.Client(
+    api_key=api_key
 )
 
-reviewer_model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
-    generation_config={
-        "temperature": 0.1
-    },
-    system_instruction="""
-あなたは非常に厳格な
-DevSecOps reviewerです。
 
-重点:
-- secrets
-- 本番リスク
-- 権限
-- hardcoded password
-- destructive operation
-- 保守性
-
-曖昧ならrejectしてください。
-"""
-)
-
-fix_model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
-    generation_config={
-        "temperature": 0.2
-    },
-    system_instruction="""
-あなたは修正専門AIです。
-
-既存コードを壊さず、
-最小修正を行ってください。
-
-全面再生成は禁止です。
-"""
-)
-
-# -----------------------------------
+# =========================================================
 # Load Context
-# -----------------------------------
+# =========================================================
 
 architecture = Path(
     "context/architecture.md"
@@ -123,9 +206,98 @@ reviewer_prompt = Path(
     "prompts/reviewer.txt"
 ).read_text(encoding="utf-8")
 
-# -----------------------------------
-# Build Prompt
-# -----------------------------------
+
+# =========================================================
+# Schema
+# =========================================================
+
+OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {
+            "type": "string"
+        },
+        "files": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string"
+                    },
+                    "content_b64": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "path",
+                    "content_b64"
+                ]
+            }
+        },
+        "commands": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "risks": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        }
+    },
+    "required": [
+        "summary",
+        "files",
+        "commands",
+        "risks"
+    ]
+}
+
+
+REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "approved": {
+            "type": "boolean"
+        },
+        "summary": {
+            "type": "string"
+        },
+        "risks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "severity": {
+                        "type": "string"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "location": {
+                        "type": "string"
+                    },
+                    "fix": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
+    },
+    "required": [
+        "approved",
+        "summary",
+        "risks"
+    ]
+}
+
+
+# =========================================================
+# Prompt
+# =========================================================
 
 prompt = f"""
 # Architecture
@@ -153,68 +325,65 @@ prompt = f"""
 
 filesには生成すべきファイルを含めてください。
 
-IMPORTANT:
-Return JSON only.
-Do not use markdown.
-Do not explain anything.
-Do not wrap with ```json
+重要:
+- contentはcontent_b64へbase64で格納
+- markdown禁止
+- JSON only
 """
 
-# -----------------------------------
-# Gemini Request
-# -----------------------------------
 
-response = generator_model.generate_content(
-    prompt
-)
+# =========================================================
+# Generate
+# =========================================================
 
-output = response.text
+response = client.models.generate_content(
+    model=MODEL_NAME,
+    contents=prompt,
+    config=types.GenerateContentConfig(
+        temperature=0.7,
+        response_mime_type="application/json",
+        response_schema=OUTPUT_SCHEMA,
+        system_instruction="""
+あなたは熟練のソフトウェアエンジニアです。
 
-print(output)
-
-# -----------------------------------
-# JSON Parse
-# -----------------------------------
-
-json_text = extract_json(output)
-
-try:
-    data = json.loads(json_text)
-
-except json.JSONDecodeError as e:
-
-    print("\nJSON Parse Error")
-    print(e)
-
-    repair_prompt = f"""
-以下のJSONは壊れています。
-
-JSONとして修復してください。
+要件を満たす実装を生成してください。
 
 重要:
-- 意味を変えない
-- JSONのみ返却
+- JSON only
 - markdown禁止
-
-Broken JSON:
-{json_text}
+- 本番運用品質
 """
+    )
+)
 
-    repair_response = fix_model.generate_content(
-        repair_prompt
+raw_output = response.text
+
+print("\n=== RAW OUTPUT ===")
+print(raw_output)
+
+json_text = extract_json(raw_output)
+
+json_text = sanitize_json_string(
+    json_text
+)
+
+data = safe_json_loads(json_text)
+
+if not isinstance(data, dict):
+    raise RuntimeError(
+        "Generated result must be object"
     )
 
-    repaired_json = extract_json(
-        repair_response.text
-    )
 
-    data = json.loads(repaired_json)
+# =========================================================
+# Review Loop
+# =========================================================
 
-# -----------------------------------
-# Reviewer Phase
-# -----------------------------------
+retry_count = 0
 
-review_request = f"""
+while True:
+
+    review_request = f"""
 # Review Rules
 
 {review_rules}
@@ -230,276 +399,229 @@ review_request = f"""
 Review this output.
 """
 
-for i in range(5):
+    print(
+        f"\n=== REVIEW ATTEMPT {retry_count + 1} ==="
+    )
 
-    try:
+    review_response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=review_request,
+        config=types.GenerateContentConfig(
+            temperature=0.1,
+            response_mime_type="application/json",
+            response_schema=REVIEW_SCHEMA,
+            system_instruction="""
+あなたは厳格なDevSecOps reviewerです。
 
-        print(
-            f"\nReview request attempt: {i + 1}"
+重点:
+- secrets
+- destructive operations
+- hardcoded passwords
+- 本番リスク
+- 権限
+"""
         )
+    )
 
-        review_response = reviewer_model.generate_content(
-            review_request
-        )
+    review_raw = review_response.text
 
-        break
+    print("\n=== REVIEW RAW ===")
+    print(review_raw)
 
-    except Exception as e:
+    review_json = extract_json(
+        review_raw
+    )
 
-        print(e)
+    review_json = sanitize_json_string(
+        review_json
+    )
 
-        if i == 4:
-            raise
+    review_data = safe_json_loads(
+        review_json
+    )
 
-        print(
-            "\nWaiting for API cooldown..."
-        )
+    risks = review_data.get(
+        "risks",
+        []
+    )
 
-        time.sleep(45)
-
-review_output = review_response.text
-
-print("\n=== REVIEW RESULT ===")
-print(review_output)
-
-review_json = extract_json(review_output)
-
-review_data = json.loads(review_json)
-
-# -----------------------------------
-# Review Gate
-# -----------------------------------
-
-MAX_RETRY = 3
-retry_count = 0
-
-while True:
-
-    risks = review_data.get("risks", [])
-
-    blocking_risks = []
+    blocking = []
 
     for r in risks:
 
-        # dict以外は無視
         if not isinstance(r, dict):
             continue
 
         severity = r.get("severity")
 
         if severity in BLOCKING_SEVERITIES:
-            blocking_risks.append(r)
+            blocking.append(r)
 
-    # blocker/high が無ければ通す
-    if len(blocking_risks) == 0:
-        print("Only warning-level risks found")
-        print("Accepting result")
+    if not blocking:
+
+        print(
+            "\nReview passed"
+        )
+
         break
-
-    print("Review failed")
-    print("Retrying with fixes...")
 
     retry_count += 1
 
     if retry_count >= MAX_RETRY:
-        print("Max retry reached")
-        exit(1)
+        raise RuntimeError(
+            "Max retry reached"
+        )
 
-    # Reviewer結果をGeneratorへ返す
+    print(
+        "\nBlocking risks found"
+    )
+
     fix_prompt = f"""
-前回の出力はレビューに失敗しました。
-
-レビュー結果:
-{json.dumps(review_data, ensure_ascii=False, indent=2)}
-
-以下のルールで修正してください。
+前回JSONを修正してください。
 
 重要:
-- HIGH / CRITICAL の問題のみ修正
-- 正常なコードは変更禁止
-- 必要最小限の修正のみ
-- files配列は維持
-- JSONのみ返却
+- 元JSON構造維持
+- 必要最小限修正
+- filesを省略禁止
 - markdown禁止
+- content_b64を維持
+
+前回JSON:
+{json.dumps(data, ensure_ascii=False)}
+
+レビュー結果:
+{json.dumps(review_data, ensure_ascii=False)}
 """
-    
+
     retry_temp = max(
         0.05,
         0.3 - (retry_count * 0.1)
     )
 
-    fix_model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        generation_config={
-            "temperature": retry_temp
-        },
-        system_instruction="""
+    fix_response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=fix_prompt,
+        config=types.GenerateContentConfig(
+            temperature=retry_temp,
+            response_mime_type="application/json",
+            response_schema=OUTPUT_SCHEMA,
+            system_instruction="""
 あなたは修正専門AIです。
 
-既存コードを壊さず、
-必要最小限の修正のみ行ってください。
-
-全面再生成は禁止です。
+全面再生成禁止。
+必要最小限修正のみ。
 """
+        )
     )
 
-    fix_response = fix_model.generate_content(
-        fix_prompt
+    fix_raw = fix_response.text
+
+    print("\n=== FIX RAW ===")
+    print(fix_raw)
+
+    fixed_json = extract_json(
+        fix_raw
     )
 
-    print("\n=== FIX RESULT ===\n")
-    print(fix_response.text)
-
-    result_json = extract_json(
-        fix_response.text
+    fixed_json = sanitize_json_string(
+        fixed_json
     )
 
-    result = json.loads(result_json)
-
-    # 再レビュー
-    review_request = f"""
-You are a strict DevSecOps reviewer.
-
-Review this generated result.
-
-Rules:
-- No secrets exposure
-- No destructive operations
-- Persistent volume必須
-- PHP only, No framework
-- PDO mandatory
-- No hardcoded password
-- Production riskチェック
-
-Return JSON:
-{{
-  "approved": true/false,
-  "risks": [],
-  "fixes": [],
-  "summary": ""
-}}
-
-Target:
-{json.dumps(result, ensure_ascii=False, indent=2)}
-"""
-
-    review_response = reviewer_model.generate_content(
-        review_request
+    data = safe_json_loads(
+        fixed_json
     )
 
-    print("\n=== RE-REVIEW RESULT ===\n")
-    print(review_response.text)
 
-    review_json = extract_json(review_response.text)
-
-    review_data = json.loads(review_json)
-
-    data = result
-
-# -----------------------------------
-# Save Log
-# -----------------------------------
+# =========================================================
+# Save Logs
+# =========================================================
 
 timestamp = datetime.now().strftime(
     "%Y%m%d_%H%M%S"
 )
 
-log_path = Path(
-    f"logs/ai_run_{timestamp}.md"
+log_text(
+    Path(
+        f"logs/ai_run_{timestamp}.txt"
+    ),
+    raw_output
 )
 
-log_path.parent.mkdir(
-    parents=True,
-    exist_ok=True
+log_text(
+    Path(
+        f"generated/runtime/output_{timestamp}.json"
+    ),
+    json.dumps(
+        data,
+        indent=2,
+        ensure_ascii=False
+    )
 )
 
-log_path.write_text(
-    output,
-    encoding="utf-8"
-)
-
-# -----------------------------------
-# Save Docs
-# -----------------------------------
-
-doc_path = Path(
-    "generated/docs/improvement_proposal.md"
-)
-
-doc_path.parent.mkdir(
-    parents=True,
-    exist_ok=True
-)
-
-doc_path.write_text(
-    output,
-    encoding="utf-8"
-)
-
-# -----------------------------------
-# Save JSON
-# -----------------------------------
-
-json_path = Path(
-    f"generated/runtime/output_{timestamp}.json"
-)
-
-json_path.parent.mkdir(
-    parents=True,
-    exist_ok=True
-)
-
-json_path.write_text(
-    json.dumps(data, indent=2),
-    encoding="utf-8"
-)
-
-# -----------------------------------
-# Print Result
-# -----------------------------------
-
-print(f"\nSaved: {log_path}")
-print(f"Saved: {json_path}")
-
-# -----------------------------------
-# Save Review JSON
-# -----------------------------------
-
-review_path = Path(
-    f"generated/runtime/review_{timestamp}.json"
-)
-
-review_path.write_text(
+log_text(
+    Path(
+        f"generated/runtime/review_{timestamp}.json"
+    ),
     json.dumps(
         review_data,
         indent=2,
         ensure_ascii=False
-    ),
-    encoding="utf-8"
+    )
 )
 
-print(f"Saved: {review_path}")
+print("\nSaved logs")
 
-# -----------------------------------
+
+# =========================================================
 # Generate Files
-# -----------------------------------
+# =========================================================
 
-safe_root = Path(
-    "generated/files"
+SAFE_ROOT.mkdir(
+    parents=True,
+    exist_ok=True
 )
 
 for file in data.get("files", []):
 
-    file_path = safe_root / file["path"]
+    relative_path = file.get("path")
 
-    file_path.parent.mkdir(
-        parents=True,
-        exist_ok=True
+    content_b64 = file.get(
+        "content_b64"
     )
 
-    file_path.write_text(
-        file["content"],
-        encoding="utf-8"
-    )
+    if not relative_path:
+        print("Skip invalid path")
+        continue
 
-    print(f"Generated: {file_path}")
+    if not content_b64:
+        print(
+            f"Skip empty content: {relative_path}"
+        )
+        continue
+
+    try:
+
+        decoded = decode_b64(
+            content_b64
+        )
+
+        safe_write_file(
+            SAFE_ROOT,
+            relative_path,
+            decoded
+        )
+
+    except Exception as e:
+
+        print(
+            f"Failed writing {relative_path}"
+        )
+
+        print(e)
+
+
+# =========================================================
+# Final
+# =========================================================
+
+print("\nPipeline completed successfully")
