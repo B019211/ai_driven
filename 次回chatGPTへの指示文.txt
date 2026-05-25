@@ -1,0 +1,131 @@
+# 明日の作業メモ
+
+## 今日できたこと
+
+AI pipeline に以下を追加:
+
+* AI generate
+* reviewer loop
+* safe file write
+* path traversal 防御
+* allowed path 制限
+* base64 decode
+* YAML parse validation
+* remote ansible validation
+* remote ssh execution
+
+かなり CI/CD パイプラインっぽくなってきた。
+
+---
+
+## 現在の問題
+
+### 1. SSH validation が不安定
+
+現在:
+
+ssh timeout が validation failure 扱い。
+
+learning phase では:
+
+* infra unavailable
+* syntax failure
+
+を分離したい。
+
+次回:
+
+SSH timeout は warning 扱いへ変更。
+
+---
+
+### 2. AI が壊れた YAML を生成する
+
+今回:
+
+* NUL文字混入
+* malformed yaml
+* typo command
+
+が発生。
+
+次回:
+
+decode後に:
+
+decoded.replace("\x00", "")
+
+を追加。
+
+---
+
+### 3. validation を増やしすぎない
+
+今は validator AI を追加せず:
+
+* local deterministic validation
+* review loop
+
+だけで進める。
+
+まずは:
+
+「最後まで通る」
+
+を最優先。
+
+---
+
+## 次にやること
+
+優先順:
+
+1.
+
+SSH timeout を warning 化
+
+2.
+
+decode後 sanitize
+
+3.
+
+validation_errors を:
+
+* local
+* remote
+* infrastructure
+
+へ分離
+
+4.
+
+ansible syntax check を安定化
+
+5.
+
+podman 実行まで通す
+
+---
+
+## 長期的方向性
+
+最終的には:
+
+Generate
+↓
+Review
+↓
+Validation
+↓
+Fix
+↓
+Deploy
+
+の multi-agent pipeline 化を目指す。
+
+ただし今は:
+
+「最小構成で完走」
+
+を優先。

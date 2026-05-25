@@ -1,81 +1,11 @@
-<?php
-declare(strict_types=1);
-
-// Database configuration from environment variables
-$dbHost = getenv('DB_HOST') ?: 'mysql'; // 'mysql' is the service name within the pod
-$dbName = getenv('DB_NAME') ?: 'testdb';
-$dbUser = getenv('DB_USER') ?: 'app_user';
-$dbPassword = getenv('DB_PASSWORD') ?: 'anothersecurepassword'; // IMPORTANT: Use secure methods in production!
-
-$dsn = "mysql:host={$dbHost};dbname={$dbName};charset=utf8mb4";
-$options = [
-    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    PDO::ATTR_EMULATE_PREPARES   => false,
-];
-
-$message = '';
-$data = [];
-
-try {
-    $pdo = new PDO($dsn, $dbUser, $dbPassword, $options);
-    $message = "Successfully connected to MySQL database '{$dbName}'!";
-
-    // Create a simple table if it doesn't exist
-    $pdo->exec("CREATE TABLE IF NOT EXISTS messages (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        content VARCHAR(255) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )");
-
-    // Insert a message
-    $stmt = $pdo->prepare("INSERT INTO messages (content) VALUES (?)");
-    $stmt->execute(["Hello from PHP! " . date('Y-m-d H:i:s')]);
-
-    // Fetch messages
-    $stmt = $pdo->query("SELECT id, content, created_at FROM messages ORDER BY created_at DESC LIMIT 5");
-    $data = $stmt->fetchAll();
-
-} catch (\PDOException $e) {
-    $message = "Database connection failed: " . $e->getMessage();
-}
-?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LAMP Pod Application</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
-        .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        h1 { color: #0056b3; }
-        p { margin-bottom: 10px; }
-        ul { list-style-type: none; padding: 0; }
-        li { background-color: #e9ecef; margin-bottom: 5px; padding: 10px; border-radius: 4px; }
-        .error { color: red; font-weight: bold; }
-        .success { color: green; font-weight: bold; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>LAMP Pod Application</h1>
-        <p class="<?= strpos($message, 'failed') !== false ? 'error' : 'success' ?>">
-            <?= htmlspecialchars($message) ?>
-        </p>
-
-        <?php if (!empty($data)): ?>
-            <h2>Recent Messages:</h2>
-            <ul>
-                <?php foreach ($data as $row): ?>
-                    <li>
-                        <strong>ID:</strong> <?= htmlspecialchars((string)$row['id']) ?><br>
-                        <strong>Content:</strong> <?= htmlspecialchars($row['content']) ?><br>
-                        <strong>Created At:</strong> <?= htmlspecialchars($row['created_at']) ?>
-                    </li>
-                <?php endforeach; ?>
-            </ul>
-        <?php endif; ?>
-    </div>
-</body>
-</html>
+<?php
+$servername = "mysql";
+$username = "root";
+$password = "mysecretpassword";
+$dbname = "testdb";
+
+try {
+    $conn = new POO("mysql:host=$servername;dbname=$dbname", $username, $password);
+    $conn->setAttribute(PDO::ATTR_ERRMODE, PDF_ERRMODE_EXCEPTION);
+    echo "H><h1>Hello from PHP!</h1></H>";
+    echho "q�������ѕ���Ս���͙ձ��Ѽ�5�ME0���х��͔耑�����������4(4(������Ű��IQ�Q	1�%�9=P�a%MQL����ͅ��̀�4(�����������%9P�ؤ�U9M%9�UQ=}%9I59P�AI%5Id�-d�4(�����������ͅ���YI!H���Ԥ�9=P�9U10�4(��������ɕ�}��є�Q%5MQ5@�U1P�UII9Q}Q%5MQ5@�=8�UAQ�UII9Q}Q%5MQ5@4(�������4(������������ᕌ���Ű��4(�������������Q���������ͅ��̜����������ɕ�ѕ���Ս���͙ձ�������4(4(������ѵЀ􀑍������ɕ��ɔ��M1P�=U9P����I=4����ͅ��̈��4(������ѵд��ᕍ�є���4(�������չЀ��ѵд���э���յ����4(4(�����������չЀ������4(����������ѵЀ􀑍������ɕ��ɔ��%9MIP�%9Q<����ͅ��̀����ͅ����Y1UL��鵕�ͅ������4(����������ѵд�����A�Ʌ���鵕�ͅ���������ͅ����4(������������ͅ����Q��́�́��ѕ�Ё���ͅ����ɽ��A!@���4(����������ѵд��ᕍ�є���4(�����������������%�͕�ѕ����ѕ�Ё���ͅ��������4(�����4(4(������ѵЀ􀑍������ɕ��ɔ��M1P��������ͅ����ɕ�}��є�I=4����ͅ��̈��4(������ѵд��ᕍ�є���4(�����ɕ�ձЀ��ѵд���э����A<��Q!}MM=��4(4(����������չР�ɕ�ձФ�������4(�����������������5��ͅ����������4(���������������հ����4(����������ɕ������ɕ�ձЁ�̀�ɽܤ��4(��������������������%耈����ɽ�l����t������5��ͅ��耈����ɽ�l����ͅ���t��������є耈����ɽ�l�ɕ�}��є�t����𽱤���4(���������4(��������������հ���4(����􁕱͔��4(�����������������9�����ͅ��́��չ�������4(�����4(4)􁍅э��A=ፕ�ѥ��������4(�������������!������ɽ��A!@������4(���������������屔��������ɕ��������ѥ���������耈����������5��ͅ�������������4)�4(�������ձ��4(��

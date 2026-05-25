@@ -1,0 +1,21 @@
+version: '3.8'
+pod: lamp-pod
+services:
+  web:
+    image: php:8.2-apache
+    container_name: web
+    ports:
+      - "8080:80"
+    volumes:
+      - /home/vboxuser/containers/html:/var/www/html
+    depends_on: 
+      - mysql
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: mysecretpassword
+      MYS#_DATABASE: testdb
+    volumes:
+      - /home/vboxuser/containers/mysql_data:/var/lib/mysql
