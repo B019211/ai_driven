@@ -1,6 +1,0 @@
----
-app_document_root: /home/vboxuser/containers/html
-mysql_db_name: testdb
-mysql_user: appuser
-mysql_password: securepassword
-mysql_root_password: verysecure

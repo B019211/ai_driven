@@ -442,11 +442,24 @@ inventory.ini の hostname は:
 
 重要:
 - contentはcontent_b64へbase64で格納
-- 必ずUTF-8 printable textをbase64化
-- NUL文字(\x00)禁止
+- UTF-8 printable text only
+- 制御文字禁止
 - binary禁止
 - markdown禁止
 - JSON only
+- YAMLは厳密構文
+- YAML literal only
+- YAML indentation must use 2 spaces only
+- Never prefix keys with numbers
+- Every YAML key must start at line head
+- Never concatenate YAML keys
+- owner and group must be separate lines
+- Never prefix keys with numbers
+- Generate strictly valid YAML
+- YAML must be parseable by yaml.safe_load()
+- key: value の後に別key連結禁止
+- ansible module行の改行省略禁止
+- "{{ variable }}" は必ずダブルクォートで囲む
 """
 
 
@@ -727,6 +740,12 @@ print("\nSaved logs")
 # Generate Files
 # =========================================================
 
+import shutil
+
+if SAFE_ROOT.exists():
+
+    shutil.rmtree(SAFE_ROOT)
+
 SAFE_ROOT.mkdir(
     parents=True,
     exist_ok=True
@@ -735,6 +754,9 @@ SAFE_ROOT.mkdir(
 for file in data.get("files", []):
 
     relative_path = file.get("path")
+
+    if relative_path:
+        relative_path = relative_path.strip()
 
     content_b64 = file.get(
         "content_b64"
@@ -752,13 +774,100 @@ for file in data.get("files", []):
 
     try:
 
+        import string
+        import yaml
+
         decoded = decode_b64(
             content_b64
         )
 
-        decoded = decoded.replace(
+        # UTF-8 normalize
+        decoded = decoded.encode(
+            "utf-8",
+            errors="ignore"
+        ).decode(
+            "utf-8",
+            errors="ignore"
+        )
+
+        # ASCII printable only
+        ASCII_ALLOWED = set(
+            string.printable
+        )
+
+        decoded = "".join(
+            c for c in decoded
+            if c in ASCII_ALLOWED
+        )
+
+        # dangerous chars remove
+        BAD_CHARS = [
             "\x00",
-            ""
+            "\x01",
+            "\x02",
+            "\x03",
+            "\x04",
+            "\x05",
+            "\x06",
+            "\x07",
+            "\x08",
+            "\x0b",
+            "\x0c",
+            "\x0e",
+            "\x0f",
+            "\x10",
+            "\x11",
+            "\x12",
+            "\x13",
+            "\x14",
+            "\x15",
+            "\x16",
+            "\x17",
+            "\x18",
+            "\x19",
+            "\x1a",
+            "\x1b",
+            "\x1c",
+            "\x1d",
+            "\x1e",
+            "\x1f"
+        ]
+
+        for ch in BAD_CHARS:
+
+            decoded = decoded.replace(
+                ch,
+                ""
+            )
+
+        # tab -> spaces
+        decoded = decoded.replace(
+            "\t",
+            "    "
+        )
+
+        # normalize newline
+        decoded = decoded.replace(
+            "\r\n",
+            "\n"
+        )
+
+        decoded = decoded.replace(
+            "\r",
+            "\n"
+        )
+
+        # key merge fix
+        decoded = re.sub(
+            r"([^\n])\s+([A-Za-z0-9_]+:)",
+            r"\1\n\2",
+            decoded
+        )
+
+        decoded = re.sub(
+            r"\{\{\s*([^\}]+)\s*\}\}",
+            r"{{ \1 }}",
+            decoded
         )
 
         if not decoded.strip():
@@ -767,15 +876,78 @@ for file in data.get("files", []):
                 f"Empty decoded file: {relative_path}"
             )
 
-        decoded = decoded.replace(
-            "\x00",
-            ""
-        )
-
         if relative_path not in ALLOWED_PATHS:
+
             raise ValueError(
                 f"Forbidden path: {relative_path}"
-    )
+            )
+
+        # =================================================
+        # YAML validation before save
+        # =================================================
+
+        if relative_path.endswith(
+            (".yml", ".yaml")
+        ):
+
+            try:
+
+                yaml.safe_load(decoded)
+
+            except Exception as e:
+
+                print(
+                    "\n=== INVALID YAML BEFORE SAVE ==="
+                )
+
+                print(decoded)
+
+                yaml_fix_prompt = f"""
+        このYAMLは構文エラーです。
+
+        必ず yaml.safe_load() 可能な
+        YAMLへ修正してください。
+
+        重要:
+        - YAML only
+        - markdown禁止
+        - explanation禁止
+        - indentation厳守
+        - key連結禁止
+        - owner/groupは別行
+        - ansible moduleは改行必須
+
+        壊れているYAML:
+        {decoded}
+
+        エラー:
+        {str(e)}
+        """
+
+                fix_yaml_response = (
+                    client.models.generate_content(
+                        model=MODEL_NAME,
+                        contents=yaml_fix_prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=0.05
+                        )
+                    )
+                )
+
+                decoded = (
+                    fix_yaml_response.text
+                    .strip()
+                )
+
+                print(
+                    "\n=== YAML AUTO FIXED ==="
+                )
+
+                print(decoded)
+
+                # 再validation
+                yaml.safe_load(decoded)
+
         safe_write_file(
             SAFE_ROOT,
             relative_path,
@@ -789,7 +961,6 @@ for file in data.get("files", []):
         )
 
         print(e)
-
 # =========================================================
 # Common Paths
 # =========================================================
@@ -903,6 +1074,19 @@ try:
         })
 
     else:
+
+        print("\n=== PLAYBOOK CONTENT ===")
+        print(
+            playbook_file.read_text(
+                encoding="utf-8"
+            )
+        )
+
+        playbook_text = playbook_file.read_text(
+            encoding="utf-8"
+        )
+
+        print(repr(playbook_text))
 
         yaml.safe_load(
             playbook_file.read_text(
