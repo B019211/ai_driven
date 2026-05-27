@@ -243,6 +243,72 @@ remote_command: str
     ])
 
 # =========================================================
+# YAML Repair
+# =========================================================
+
+def repair_yaml_text(
+    text: str
+) -> str:
+
+    import re
+
+    # -------------------------------------------------
+    # normalize jinja spacing
+    # -------------------------------------------------
+
+    text = re.sub(
+        r"\{\{\s*([^\}]+)\s*\}\}",
+        r"{{ \1 }}",
+        text
+    )
+
+    # -------------------------------------------------
+    # key merge repair
+    # db: x    next:
+    # -------------------------------------------------
+
+    text = re.sub(
+        r"([^\n])(\s+[A-Za-z_][A-Za-z0-9_]*:)",
+        r"\1\n\2",
+        text
+    )
+
+    # -------------------------------------------------
+    # task merge repair
+    # - name: xxx      module:
+    # -------------------------------------------------
+
+    text = re.sub(
+        r"(- name:[^\n]+)\s+([a-zA-Z0-9_.]+:)",
+        r"\1\n  \2",
+        text
+    )
+
+    # -------------------------------------------------
+    # owner/group collapse repair
+    # owner: xgroup:
+    # -------------------------------------------------
+
+    text = re.sub(
+        r"([^\n])(group:)",
+        r"\1\n\2",
+        text
+    )
+
+    # -------------------------------------------------
+    # malformed jinja recovery
+    # "{{ app_dir }}/x
+    # -------------------------------------------------
+
+    text = re.sub(
+        r'"{{\s*([^}]+)\s*}}([^"\n]*)',
+        r'"{{ \1 }}\2"',
+        text
+    )
+
+    return text
+
+# =========================================================
 # ENV
 # =========================================================
 
@@ -708,7 +774,7 @@ log_text(
     Path(
         f"logs/ai_run_{timestamp}.txt"
     ),
-    raw_output
+    raw_output or ""
 )
 
 log_text(
@@ -735,6 +801,83 @@ log_text(
 
 print("\nSaved logs")
 
+# =========================================================
+# Validation Helpers
+# =========================================================
+
+import base64
+
+from difflib import (
+    get_close_matches
+)
+
+KNOWN_YAML_KEYS = {
+
+    "pod_name",
+    "mysql_container_name",
+    "web_container_name",
+    "mysql_root_password",
+    "mysql_image",
+    "web_image",
+    "html_dir",
+    "web_port",
+    "mysql_db"
+
+}
+
+def validate_base64(data):
+
+    try:
+
+        base64.b64decode(
+            data,
+            validate=True
+        )
+
+        return True
+
+    except Exception:
+
+        return False
+
+def semantic_yaml_check(obj):
+
+    problems = []
+
+    def walk(x):
+
+        if isinstance(x, dict):
+
+            for k, v in x.items():
+
+                matches = get_close_matches(
+                    k,
+                    KNOWN_YAML_KEYS,
+                    n=1,
+                    cutoff=0.80
+                )
+
+                if (
+                    matches
+                    and k != matches[0]
+                ):
+
+                    problems.append(
+                        f"Possible typo: "
+                        f"{k} -> {matches[0]}"
+                    )
+
+                walk(v)
+
+        elif isinstance(x, list):
+
+            for i in x:
+
+                walk(i)
+
+    walk(obj)
+
+    return problems
 
 # =========================================================
 # Generate Files
@@ -753,33 +896,99 @@ SAFE_ROOT.mkdir(
 
 for file in data.get("files", []):
 
-    relative_path = file.get("path")
-
-    if relative_path:
-        relative_path = relative_path.strip()
-
-    content_b64 = file.get(
-        "content_b64"
-    )
-
-    if not relative_path:
-        print("Skip invalid path")
-        continue
-
-    if not content_b64:
-        print(
-            f"Skip empty content: {relative_path}"
-        )
-        continue
-
     try:
 
-        import string
         import yaml
 
-        decoded = decode_b64(
-            content_b64
+        relative_path = file.get("path")
+
+        if relative_path:
+            relative_path = relative_path.strip()
+
+        content_b64 = file.get(
+            "content_b64"
         )
+
+        if not relative_path:
+
+            print("Skip invalid path")
+            continue
+
+        if not content_b64:
+
+            print(
+                f"Skip empty content: {relative_path}"
+            )
+
+            continue
+
+        # =================================================
+        # Base64 validation
+        # =================================================
+
+        if not validate_base64(
+            content_b64
+        ):
+
+            raise ValueError(
+                f"Broken base64: {relative_path}"
+            )
+
+        # =================================================
+        # Base64 decode
+        # =================================================
+
+        try:
+
+            decoded = decode_b64(
+                content_b64
+            )
+
+        except Exception:
+
+            print(
+                f"\n=== BROKEN BASE64 DETECTED ===\n"
+                f"{relative_path}"
+            )
+
+            base64_fix_prompt = f"""
+        このbase64は壊れています。
+
+        必ず修復してください。
+
+        重要:
+        - base64 only
+        - explanation禁止
+        - markdown禁止
+        - 改行禁止
+        - encoded data only
+
+        壊れているbase64:
+        {content_b64}
+        """
+
+            fix_b64_response = (
+                client.models.generate_content(
+                    model=MODEL_NAME,
+                    contents=base64_fix_prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.0
+                    )
+                )
+            )
+
+            repaired_b64 = (
+                fix_b64_response.text
+                .strip()
+            )
+
+            decoded = decode_b64(
+                repaired_b64
+            )
+
+            print(
+                "\n=== BASE64 AUTO FIXED ==="
+            )
 
         # UTF-8 normalize
         decoded = decoded.encode(
@@ -790,55 +999,16 @@ for file in data.get("files", []):
             errors="ignore"
         )
 
-        # ASCII printable only
-        ASCII_ALLOWED = set(
-            string.printable
-        )
-
+        # remove dangerous control chars only
         decoded = "".join(
             c for c in decoded
-            if c in ASCII_ALLOWED
-        )
-
-        # dangerous chars remove
-        BAD_CHARS = [
-            "\x00",
-            "\x01",
-            "\x02",
-            "\x03",
-            "\x04",
-            "\x05",
-            "\x06",
-            "\x07",
-            "\x08",
-            "\x0b",
-            "\x0c",
-            "\x0e",
-            "\x0f",
-            "\x10",
-            "\x11",
-            "\x12",
-            "\x13",
-            "\x14",
-            "\x15",
-            "\x16",
-            "\x17",
-            "\x18",
-            "\x19",
-            "\x1a",
-            "\x1b",
-            "\x1c",
-            "\x1d",
-            "\x1e",
-            "\x1f"
-        ]
-
-        for ch in BAD_CHARS:
-
-            decoded = decoded.replace(
-                ch,
-                ""
+            if (
+                c == "\n"
+                or c == "\r"
+                or c == "\t"
+                or ord(c) >= 32
             )
+        )
 
         # tab -> spaces
         decoded = decoded.replace(
@@ -857,18 +1027,17 @@ for file in data.get("files", []):
             "\n"
         )
 
-        # key merge fix
-        decoded = re.sub(
-            r"([^\n])\s+([A-Za-z0-9_]+:)",
-            r"\1\n\2",
-            decoded
-        )
+        # =================================================
+        # YAML targeted repair
+        # =================================================
 
-        decoded = re.sub(
-            r"\{\{\s*([^\}]+)\s*\}\}",
-            r"{{ \1 }}",
-            decoded
-        )
+        if relative_path.endswith(
+            (".yml", ".yaml")
+        ):
+
+            decoded = repair_yaml_text(
+                decoded
+            )
 
         if not decoded.strip():
 
@@ -892,61 +1061,101 @@ for file in data.get("files", []):
 
             try:
 
-                yaml.safe_load(decoded)
-
-            except Exception as e:
-
-                print(
-                    "\n=== INVALID YAML BEFORE SAVE ==="
+                parsed_yaml = yaml.safe_load(
+                    decoded
                 )
 
-                print(decoded)
+            except yaml.YAMLError:
 
-                yaml_fix_prompt = f"""
-        このYAMLは構文エラーです。
+                try:
 
-        必ず yaml.safe_load() 可能な
-        YAMLへ修正してください。
+                    decoded = repair_yaml_text(
+                        decoded
+                    )
 
-        重要:
-        - YAML only
-        - markdown禁止
-        - explanation禁止
-        - indentation厳守
-        - key連結禁止
-        - owner/groupは別行
-        - ansible moduleは改行必須
+                    parsed_yaml = yaml.safe_load(
+                        decoded
+                    )
 
-        壊れているYAML:
-        {decoded}
+                    print(
+                        "\n=== YAML REPAIRED LOCALLY ==="
+                    )
 
-        エラー:
-        {str(e)}
-        """
+                except yaml.YAMLError as e:
 
-                fix_yaml_response = (
-                    client.models.generate_content(
-                        model=MODEL_NAME,
-                        contents=yaml_fix_prompt,
-                        config=types.GenerateContentConfig(
-                            temperature=0.05
+                    print(
+                        "\n=== INVALID YAML BEFORE SAVE ==="
+                    )
+
+                    print(decoded)
+
+                    yaml_fix_prompt = f"""
+このYAMLは構文エラーです。
+
+必ず yaml.safe_load() 可能な
+YAMLへ修正してください。
+
+重要:
+- YAML only
+- markdown禁止
+- explanation禁止
+- indentation厳守
+- key連結禁止
+- owner/groupは別行
+- ansible moduleは改行必須
+
+壊れているYAML:
+{decoded}
+
+エラー:
+{str(e)}
+"""
+
+                    fix_yaml_response = (
+                        client.models.generate_content(
+                            model=MODEL_NAME,
+                            contents=yaml_fix_prompt,
+                            config=types.GenerateContentConfig(
+                                temperature=0.05
+                            )
                         )
                     )
-                )
 
-                decoded = (
-                    fix_yaml_response.text
-                    .strip()
-                )
+                    decoded = (
+                        fix_yaml_response.text
+                        .strip()
+                    )
 
-                print(
-                    "\n=== YAML AUTO FIXED ==="
-                )
+                    print(
+                        "\n=== YAML AUTO FIXED ==="
+                    )
 
-                print(decoded)
+                    print(decoded)
 
-                # 再validation
-                yaml.safe_load(decoded)
+                    # 再validation
+                    parsed_yaml = yaml.safe_load(
+                        decoded
+                    )
+
+                    # =============================================
+                    # Semantic YAML validation
+                    # =============================================
+
+                    semantic_problems = (
+                        semantic_yaml_check(
+                            parsed_yaml
+                        )
+                    )
+
+                    if semantic_problems:
+
+                        print(
+                            "\n=== SEMANTIC WARNINGS ==="
+                        )
+
+                        for p in semantic_problems:
+
+                            print(p)
 
         safe_write_file(
             SAFE_ROOT,
@@ -961,6 +1170,7 @@ for file in data.get("files", []):
         )
 
         print(e)
+
 # =========================================================
 # Common Paths
 # =========================================================

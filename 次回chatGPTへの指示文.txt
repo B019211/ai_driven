@@ -1,131 +1,158 @@
-# 明日の作業メモ
+# AI駆動CI/CD 学習メモ（次回引き継ぎ）
 
-## 今日できたこと
+## 今日の到達点
 
-AI pipeline に以下を追加:
+AI生成YAMLの破損問題について、
+binary corruption ではなく
+text corruption レベルまで問題を縮小できた。
 
-* AI generate
-* reviewer loop
-* safe file write
-* path traversal 防御
-* allowed path 制限
-* base64 decode
-* YAML parse validation
-* remote ansible validation
-* remote ssh execution
+以下を導入済み：
 
-かなり CI/CD パイプラインっぽくなってきた。
-
----
-
-## 現在の問題
-
-### 1. SSH validation が不安定
-
-現在:
-
-ssh timeout が validation failure 扱い。
-
-learning phase では:
-
-* infra unavailable
-* syntax failure
-
-を分離したい。
-
-次回:
-
-SSH timeout は warning 扱いへ変更。
-
----
-
-### 2. AI が壊れた YAML を生成する
-
-今回:
-
-* NUL文字混入
-* malformed yaml
-* typo command
-
-が発生。
-
-次回:
-
-decode後に:
-
-decoded.replace("\x00", "")
-
-を追加。
-
----
-
-### 3. validation を増やしすぎない
-
-今は validator AI を追加せず:
-
-* local deterministic validation
+* UTF-8 normalize
+* ASCII printable only
+* dangerous chars remove
+* newline normalize
+* YAML validation before save
+* INVALID YAML dump
+* self-healing YAML fix loop（途中）
+* path validation
 * review loop
 
-だけで進める。
+現在、
+AI生成物を「信用しない」方向へ
+アーキテクチャを進めている。
 
-まずは:
-
-「最後まで通る」
-
-を最優先。
+かなり重要な転換点。
 
 ---
 
-## 次にやること
+## 現在の主問題
 
-優先順:
+Gemini生成YAMLで以下が発生：
 
-1.
+* key merge
+* indentation collapse
+* typo
+* line merge
 
-SSH timeout を warning 化
+例：
 
-2.
+db_name: testdb    mysql_root_password:
 
-decode後 sanitize
+owner/group 崩れ：
 
-3.
+0group: vboxuser
 
-validation_errors を:
+Ansible module merge：
 
-* local
-* remote
-* infrastructure
+* name: xxx      containers.podman.container:
 
-へ分離
-
-4.
-
-ansible syntax check を安定化
-
-5.
-
-podman 実行まで通す
+つまり、
+生成品質より
+「生成後repair」が本筋。
 
 ---
 
-## 長期的方向性
+## 導入済み修正
 
-最終的には:
+Generate Files 内で：
 
-Generate
-↓
-Review
-↓
-Validation
-↓
-Fix
-↓
-Deploy
+* ASCII_ONLY sanitize
+* control chars remove
+* YAML pre-parse validation
 
-の multi-agent pipeline 化を目指す。
+追加済み。
 
-ただし今は:
+さらに：
 
-「最小構成で完走」
+```python
+decoded = re.sub(
+    r"([^\n])\s+([A-Za-z0-9_]+:)",
+    r"\1\n\2",
+    decoded
+)
+```
+
+を newline normalize 後へ追加。
+
+---
+
+## 次回やること
+
+### 1. deterministic YAML repair強化
+
+AI修正ではなく：
+
+* regex repair
+* indentation repair
+* ansible task repair
 
 を優先。
+
+方向性：
+
+AI生成
+↓
+sanitize
+↓
+regex repair
+↓
+yaml.safe_load
+↓
+save
+
+へ寄せる。
+
+---
+
+### 2. YAML repairを関数化
+
+候補：
+
+repair_yaml_text()
+
+へ分離。
+
+Generate Files が長くなってきた。
+
+---
+
+### 3. AI quota対策
+
+現在：
+
+Generate
+Review
+Fix
+YAML Fix
+
+で Free Tier 上限へ到達。
+
+YAML Fix AI は一旦OFFでも良い。
+
+deterministic repair 優先。
+
+---
+
+## 学び
+
+AI駆動開発では：
+
+「AI性能を上げる」
+
+より、
+
+「AIを信用しない防御層」
+
+の方が重要。
+
+特に：
+
+* schema
+* sanitizer
+* parser validation
+* retry orchestration
+
+が本質。
+
+現在かなり本流に入っている。

@@ -1,0 +1,50 @@
+---
+-
+  name: Deploy LAMP stack with Podman
+  hosts: podman_hosts
+  become: yes
+  tasks:
+    -
+      name: Create document root directory
+      ansible.builtin.file:
+        path: /home/vboxuser/containers/html
+        state: directory
+        mode: '0755'
+        owner: vboxuser
+        group: vboxuser
+    -
+      name: Copy index.php to document root
+      ansible.builtin.copy:
+        src: src/index.php
+        dest: /home/vboxuser/containers/html/index.php
+        mode: '0644'
+        owner: vboxuser
+        group: vboxuser
+    -
+      name: Ensure lamp-pod exists
+      containers.podman.pod:
+        name: lamp-pod
+        state: started
+    -
+      name: Ensure mysql container is running
+      containers.podman.container:
+        name: mysql
+        image: mysql:8.0
+        state: started
+        pod: lamp-pod
+        env:
+          MYSQL_ROOT_PASSWORD: "mysecretpassword"
+          MYSQL_DATABASE: "testdb"
+        restart_policy: always
+    -
+      name: Ensure web container is running
+      containers.podman.container:
+        name: web
+        image: php:8.2-apache
+        state: started
+        pod: lamp-pod
+        ports:
+          - "8080:80"
+        volume:
+          - "/home/vboxuser/containers/html:/var/www/html:Z"
+        restart_policy: always
