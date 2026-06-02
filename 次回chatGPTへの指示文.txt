@@ -1,158 +1,130 @@
-# AI駆動CI/CD 学習メモ（次回引き継ぎ）
+# 明日の作業
 
-## 今日の到達点
+## 現状
 
-AI生成YAMLの破損問題について、
-binary corruption ではなく
-text corruption レベルまで問題を縮小できた。
+進捗率は体感80〜90%。
 
-以下を導入済み：
+以下は完了済。
 
-* UTF-8 normalize
-* ASCII printable only
-* dangerous chars remove
-* newline normalize
-* YAML validation before save
-* INVALID YAML dump
-* self-healing YAML fix loop（途中）
-* path validation
-* review loop
+* Gemini呼び出し
+* JSON生成
+* Review Loop
+* YAML自動修復
+* inventory生成
+* playbook生成
+* Windows→asbsvr SSH鍵認証
+* asbsvr→rockey8接続確認
 
-現在、
-AI生成物を「信用しない」方向へ
-アーキテクチャを進めている。
+## 現在の失敗箇所
 
-かなり重要な転換点。
+src/index.php の content_b64 が壊れている。
 
----
+ログ:
 
-## 現在の主問題
+Failed writing src/index.php
+Broken base64: src/index.php
 
-Gemini生成YAMLで以下が発生：
+Geminiが base64 に
 
-* key merge
-* indentation collapse
-* typo
-* line merge
+::
 
-例：
+など不正文字を混入させている。
 
-db_name: testdb    mysql_root_password:
+例:
 
-owner/group 崩れ：
+PDM...PETS::QVRUUl...
 
-0group: vboxuser
+これは base64 として不正。
 
-Ansible module merge：
+## 明日やること
 
-* name: xxx      containers.podman.container:
+### 1. Base64自動修復強化
 
-つまり、
-生成品質より
-「生成後repair」が本筋。
+validate_base64() NG時に
 
----
+Gemini再生成
 
-## 導入済み修正
+ではなく
 
-Generate Files 内で：
+ファイル再生成
 
-* ASCII_ONLY sanitize
-* control chars remove
-* YAML pre-parse validation
+へ変更。
 
-追加済み。
+理想:
 
-さらに：
+if path == "src/index.php":
+regenerate file only
 
-```python
-decoded = re.sub(
-    r"([^\n])\s+([A-Za-z0-9_]+:)",
-    r"\1\n\2",
-    decoded
-)
-```
+### 2. inventory.ini確認
 
-を newline normalize 後へ追加。
+生成結果:
 
----
+[all]
+asbsvr
+rockey8
 
-## 次回やること
+[podman_hosts]
+rockey8 ansible_user=vboxuser ...
 
-### 1. deterministic YAML repair強化
+この inventory が
+asbsvr 上で利用可能か確認。
 
-AI修正ではなく：
+### 3. asbsvrへ生成物転送
 
-* regex repair
-* indentation repair
-* ansible task repair
+generated/files
 
-を優先。
-
-方向性：
-
-AI生成
 ↓
-sanitize
+
+asbsvr
+
+へコピー。
+
+scp または rsync。
+
+### 4. Remote Ansible Syntax Check
+
+現在:
+
+Permission denied (publickey...)
+
+が発生。
+
+inventory側の接続先確認。
+
+実際には
+
+Windows→asbsvr
+
+は成功済なので
+
+asbsvr上で
+
+ansible-playbook --syntax-check
+
+を直接実行して確認。
+
+### 5. Podman Collection確認
+
+asbsvr:
+
+ansible-galaxy collection install community.general
+
+実施。
+
+### 6. 実デプロイ
+
+ansible-playbook -i inventory.ini playbook.yml
+
+実行。
+
+目的は
+
+rockey8上で
+
+Podman
 ↓
-regex repair
+MySQL
 ↓
-yaml.safe_load
-↓
-save
+PHP
 
-へ寄せる。
-
----
-
-### 2. YAML repairを関数化
-
-候補：
-
-repair_yaml_text()
-
-へ分離。
-
-Generate Files が長くなってきた。
-
----
-
-### 3. AI quota対策
-
-現在：
-
-Generate
-Review
-Fix
-YAML Fix
-
-で Free Tier 上限へ到達。
-
-YAML Fix AI は一旦OFFでも良い。
-
-deterministic repair 優先。
-
----
-
-## 学び
-
-AI駆動開発では：
-
-「AI性能を上げる」
-
-より、
-
-「AIを信用しない防御層」
-
-の方が重要。
-
-特に：
-
-* schema
-* sanitizer
-* parser validation
-* retry orchestration
-
-が本質。
-
-現在かなり本流に入っている。
+起動確認。

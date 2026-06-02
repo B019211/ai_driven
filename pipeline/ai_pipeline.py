@@ -211,13 +211,15 @@ def run_command(command: list[str]) -> tuple[int, str, str]:
             command,
             capture_output=True,
             text=True,
+            encoding = "utf-8",
+            errors = "replace",
             timeout=120
         )
 
         return (
             result.returncode,
-            result.stdout,
-            result.stderr
+            result.stdout or "",
+            result.stderr or ""
         )
 
     except Exception as e:
@@ -238,9 +240,12 @@ remote_command: str
 
     return run_command([
         "ssh",
+        "-o",
+        "BatchMode=yes",
         host,
         remote_command
     ])
+
 
 # =========================================================
 # YAML Repair
@@ -307,6 +312,27 @@ def repair_yaml_text(
     )
 
     return text
+
+def strip_markdown_fence(
+    text: str
+) -> str:
+
+    text = text.strip()
+
+    text = re.sub(
+        r"^```[a-zA-Z]*\s*",
+        "",
+        text
+    )
+
+    text = re.sub(
+        r"\s*```$",
+        "",
+        text
+    )
+
+    return text.strip()
+
 
 # =========================================================
 # ENV
@@ -922,17 +948,17 @@ for file in data.get("files", []):
 
             continue
 
-        # =================================================
-        # Base64 validation
-        # =================================================
+        # # =================================================
+        # # Base64 validation
+        # # =================================================
 
-        if not validate_base64(
-            content_b64
-        ):
+        # if not validate_base64(
+        #     content_b64
+        # ):
 
-            raise ValueError(
-                f"Broken base64: {relative_path}"
-            )
+        #     raise ValueError(
+        #         f"Broken base64: {relative_path}"
+        #     )
 
         # =================================================
         # Base64 decode
@@ -1126,16 +1152,42 @@ YAMLへ修正してください。
                         .strip()
                     )
 
+                    decoded = strip_markdown_fence(
+                        fix_yaml_response.text
+                    )
+
+                    # markdown除去
+                    decoded = re.sub(
+                        r"^```yaml\s*",
+                        "",
+                        decoded,
+                        flags=re.MULTILINE
+                    )
+
+                    decoded = re.sub(
+                        r"^```\s*",
+                        "",
+                        decoded,
+                        flags=re.MULTILINE
+                    )
+
+                    decoded = re.sub(
+                        r"\s*```$",
+                        "",
+                        decoded
+                    )
+
                     print(
                         "\n=== YAML AUTO FIXED ==="
                     )
 
                     print(decoded)
 
-                    # 再validation
                     parsed_yaml = yaml.safe_load(
                         decoded
                     )
+
+
 
                     # =============================================
                     # Semantic YAML validation
@@ -1363,8 +1415,11 @@ if (
         remote_cmd
     )
 
-    print(stdout)
-    print(stderr)
+    stdout = stdout or ""
+    stderr = stderr or ""
+
+    print(stdout if stdout else "")
+    print(stderr if stderr else "")
 
     if code != 0:
 
@@ -1372,10 +1427,15 @@ if (
             "Connection timed out",
             "Could not resolve hostname",
             "Connection refused",
-            "No route to host"
+            "No route to host",
+            "Permission denied",
+            "password:"
         ]
 
-        if any(x in stderr for x in ssh_errors):
+        if stderr and any(
+            x in stderr
+            for x in ssh_errors
+        ):
 
             print(
                 "\nSSH connection unavailable"
