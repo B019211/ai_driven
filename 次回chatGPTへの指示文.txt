@@ -1,130 +1,113 @@
-# 明日の作業
+AI駆動CI/CD構築 その2 引き継ぎ
 
-## 現状
+■ 現在のフェーズ
+Gemini Pipeline構築
 
-進捗率は体感80〜90%。
+■ 実装済み
 
-以下は完了済。
-
-* Gemini呼び出し
-* JSON生成
 * Review Loop
-* YAML自動修復
-* inventory生成
-* playbook生成
-* Windows→asbsvr SSH鍵認証
-* asbsvr→rockey8接続確認
+* YAML Validation
+* Validation結果取得
+* 修正ファイル生成ロジック
+* regenerate_file_with_context実装（暫定）
 
-## 現在の失敗箇所
+■ 実装中
 
-src/index.php の content_b64 が壊れている。
+Remote Validation
 
-ログ:
+目標フロー
 
-Failed writing src/index.php
-Broken base64: src/index.php
-
-Geminiが base64 に
-
-::
-
-など不正文字を混入させている。
-
-例:
-
-PDM...PETS::QVRUUl...
-
-これは base64 として不正。
-
-## 明日やること
-
-### 1. Base64自動修復強化
-
-validate_base64() NG時に
-
-Gemini再生成
-
-ではなく
-
-ファイル再生成
-
-へ変更。
-
-理想:
-
-if path == "src/index.php":
-regenerate file only
-
-### 2. inventory.ini確認
-
-生成結果:
-
-[all]
-asbsvr
-rockey8
-
-[podman_hosts]
-rockey8 ansible_user=vboxuser ...
-
-この inventory が
-asbsvr 上で利用可能か確認。
-
-### 3. asbsvrへ生成物転送
-
-generated/files
-
+AI生成
 ↓
-
-asbsvr
-
-へコピー。
-
-scp または rsync。
-
-### 4. Remote Ansible Syntax Check
-
-現在:
-
-Permission denied (publickey...)
-
-が発生。
-
-inventory側の接続先確認。
-
-実際には
-
-Windows→asbsvr
-
-は成功済なので
-
-asbsvr上で
-
-ansible-playbook --syntax-check
-
-を直接実行して確認。
-
-### 5. Podman Collection確認
-
-asbsvr:
-
-ansible-galaxy collection install community.general
-
-実施。
-
-### 6. 実デプロイ
-
-ansible-playbook -i inventory.ini playbook.yml
-
-実行。
-
-目的は
-
-rockey8上で
-
-Podman
+Review Loop
 ↓
-MySQL
+YAML Validation
 ↓
-PHP
+SCP転送
+↓
+Remote Validation
+↓
+結果取得
+↓
+regenerate_file_with_context
+↓
+再検証
 
-起動確認。
+■ 本日の終了理由
+
+Gemini Free Tier上限到達
+
+429 RESOURCE_EXHAUSTED
+
+gemini-2.5-flash
+20 requests/day
+
+のため実機テスト継続不可
+
+■ 明日の作業
+
+1.
+
+本日作成した修正ファイルを実行
+
+python .\pipeline\ai_pipeline.py
+
+2.
+
+regenerate_file_with_contextが正常動作するか確認
+
+確認ポイント
+
+* validation結果が取得できるか
+* AIへエラー内容が渡るか
+* 修正版ファイルが生成されるか
+
+3.
+
+SCP処理追加
+
+想定
+
+local generated file
+↓
+scp
+↓
+remote validation server
+
+4.
+
+Remote Validation実装
+
+目標
+
+ansible-playbook --syntax-check generated.yml
+
+成功時
+
+PASS
+
+失敗時
+
+ERROR LOG取得
+
+5.
+
+Review LoopへRemote Validation結果を接続
+
+最終目標
+
+生成
+↓
+レビュー
+↓
+YAML検証
+↓
+Remote検証
+↓
+失敗
+↓
+AI修正
+↓
+再検証
+
+の自己修復ループ完成

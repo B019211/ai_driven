@@ -31,7 +31,7 @@ PIPELINE_PHASE = "learning"
 ANSIBLE_CONTROL_NODE = "asbsvr"
 EXECUTION_NODE = "rockey8"
 
-REMOTE_PROJECT_ROOT = "/opt/ai_driven/generated/files"
+REMOTE_PROJECT_ROOT = "/home/vboxuser/ai_driven/generated/files"
 
 ALLOWED_PATHS = {
     "ansible/playbook.yml",
@@ -246,6 +246,81 @@ remote_command: str
         remote_command
     ])
 
+def regenerate_file(
+    path: str
+) -> str:
+    """
+    単一ファイル再生成
+    """
+
+    prompt = f"""
+以下ファイルのみ生成してください。
+
+path:
+{path}
+
+重要:
+- ファイル内容のみ返却
+- markdown禁止
+- explanation禁止
+- base64禁止
+"""
+
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.0
+        )
+    )
+
+    if not response.text:
+        raise RuntimeError(
+            f"Gemini returned empty response for {path}"
+        )
+
+    return strip_markdown_fence(
+        response.text
+    ).strip()
+
+def regenerate_file_with_context(
+    path: str,
+    architecture: str,
+    review_data: dict
+) -> str:
+
+    prompt = f"""
+Architecture:
+{architecture}
+
+Review:
+{json.dumps(review_data, ensure_ascii=False)}
+
+Target file:
+{path}
+
+このファイルのみ再生成してください。
+
+markdown禁止
+explanation禁止
+"""
+
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.0
+        )
+    )
+
+    if not response.text:
+        raise RuntimeError(
+            f"Gemini returned empty response for {path}"
+        )
+
+    return strip_markdown_fence(
+        response.text
+    ).strip()
 
 # =========================================================
 # YAML Repair
@@ -827,6 +902,28 @@ log_text(
 
 print("\nSaved logs")
 
+def regenerate_file_only(path: str) -> str:
+
+    prompt = f"""
+path:
+{path}
+
+重要:
+- ファイル本文のみ
+- markdown禁止
+- explanation禁止
+"""
+
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt
+    )
+
+    return strip_markdown_fence(
+        response.text
+    ).strip()
+
+
 # =========================================================
 # Validation Helpers
 # =========================================================
@@ -851,7 +948,19 @@ KNOWN_YAML_KEYS = {
 
 }
 
-def validate_base64(data):
+BASE64_RE = re.compile(
+    r"^[A-Za-z0-9+/=\r\n]+$"
+)
+
+def validate_base64(data: str) -> bool:
+
+    if not data:
+        return False
+
+    data = data.strip()
+
+    if not BASE64_RE.match(data):
+        return False
 
     try:
 
@@ -920,6 +1029,9 @@ SAFE_ROOT.mkdir(
     exist_ok=True
 )
 
+print(f"SAFE_ROOT = {SAFE_ROOT}")
+
+
 for file in data.get("files", []):
 
     try:
@@ -948,17 +1060,19 @@ for file in data.get("files", []):
 
             continue
 
-        # # =================================================
-        # # Base64 validation
-        # # =================================================
+        # =================================================
+        # Base64 validation
+        # =================================================
 
-        # if not validate_base64(
-        #     content_b64
-        # ):
+        if not validate_base64(content_b64):
 
-        #     raise ValueError(
-        #         f"Broken base64: {relative_path}"
-        #     )
+            print(
+                f"Invalid base64 detected: {relative_path}"
+            )
+
+            raise ValueError(
+                f"Broken base64: {relative_path}"
+            )
 
         # =================================================
         # Base64 decode
@@ -977,44 +1091,33 @@ for file in data.get("files", []):
                 f"{relative_path}"
             )
 
-            base64_fix_prompt = f"""
-        このbase64は壊れています。
+            file_regen_prompt = f"""
+        以下ファイルを再生成してください。
 
-        必ず修復してください。
+        path:
+        {relative_path}
 
         重要:
-        - base64 only
-        - explanation禁止
+        - content本体を生成
+        - base64ではなく生テキスト生成
         - markdown禁止
-        - 改行禁止
-        - encoded data only
+        - explanation禁止
 
-        壊れているbase64:
-        {content_b64}
+        返却はファイル内容のみ
         """
 
-            fix_b64_response = (
-                client.models.generate_content(
-                    model=MODEL_NAME,
-                    contents=base64_fix_prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.0
-                    )
-                )
-            )
 
-            repaired_b64 = (
-                fix_b64_response.text
-                .strip()
-            )
-
-            decoded = decode_b64(
-                repaired_b64
+            decoded = regenerate_file_with_context(
+                relative_path,
+                architecture,
+                review_data
             )
 
             print(
                 "\n=== BASE64 AUTO FIXED ==="
             )
+
+            
 
         # UTF-8 normalize
         decoded = decoded.encode(
@@ -1386,6 +1489,18 @@ except Exception as e:
         "file": str(playbook_file),
         "stderr": str(e)
     })
+
+# ---------------------------------------------------------
+# Upload generated files
+# ---------------------------------------------------------
+
+run_command([
+    "scp",
+    "-r",
+    str(SAFE_ROOT),
+    f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/"
+])
+
 
 # ---------------------------------------------------------
 
