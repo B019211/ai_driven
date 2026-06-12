@@ -286,23 +286,30 @@ path:
 def regenerate_file_with_context(
     path: str,
     architecture: str,
-    review_data: dict
+    context_data
 ) -> str:
 
     prompt = f"""
 Architecture:
 {architecture}
 
-Review:
-{json.dumps(review_data, ensure_ascii=False)}
+Context:
+{json.dumps(
+    context_data,
+    ensure_ascii=False,
+    indent=2
+)}
 
 Target file:
 {path}
 
 このファイルのみ再生成してください。
 
-markdown禁止
-explanation禁止
+重要:
+- Context内のエラーを修正
+- markdown禁止
+- explanation禁止
+- ファイル本文のみ返却
 """
 
     response = client.models.generate_content(
@@ -1018,6 +1025,8 @@ def semantic_yaml_check(obj):
 # Generate Files
 # =========================================================
 
+validation_errors = []
+
 import shutil
 
 if SAFE_ROOT.exists():
@@ -1240,15 +1249,41 @@ YAMLへ修正してください。
 {str(e)}
 """
 
-                    fix_yaml_response = (
-                        client.models.generate_content(
-                            model=MODEL_NAME,
-                            contents=yaml_fix_prompt,
-                            config=types.GenerateContentConfig(
-                                temperature=0.05
-                            )
+                    import time
+
+                    fix_yaml_response = None
+
+                    for attempt in range(3):
+                        try:
+
+
+                                fix_yaml_response = (
+                                    client.models.generate_content(
+                                        model=MODEL_NAME,
+                                        contents=yaml_fix_prompt,
+                                        config=types.GenerateContentConfig(
+                                            temperature=0.05
+                                        )
+                                    )
+                                )
+                                break
+                        
+                        except Exception as e:
+                            
+                            if "503" in str(e):
+                                print(
+                                    f"[WARN] Gemini 503 retry={attempt+1}/3"
+                                )
+                                time.sleep(10)
+                                continue
+
+                            raise
+
+                    if fix_yaml_response is None:
+                        raise RuntimeError(
+                            "Gemini fix_yaml failed after 3 retries"
                         )
-                    )
+
 
                     decoded = (
                         fix_yaml_response.text
@@ -1326,6 +1361,14 @@ YAMLへ修正してください。
 
         print(e)
 
+        validation_errors.append({
+            "type": "yaml_autofix_failed",
+            "file": relative_path,
+            "stderr": str(e)
+        })
+
+        continue
+
 # =========================================================
 # Common Paths
 # =========================================================
@@ -1350,7 +1393,11 @@ php_file = (
 
 print("\n=== VALIDATION ===")
 
-validation_errors = []
+playbook_path = (
+    SAFE_ROOT /
+    "ansible" /
+    "playbook.yml"
+)
 
 # # ---------------------------------------------------------
 # # PHP Lint
@@ -1498,7 +1545,7 @@ run_command([
     "scp",
     "-r",
     str(SAFE_ROOT),
-    f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/"
+    f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated"
 ])
 
 
@@ -1614,6 +1661,22 @@ if validation_errors:
             indent=2,
             ensure_ascii=False
         ))
+
+if validation_errors:
+
+    regeneration_context = {
+        "source": "validation",
+        "errors": validation_errors
+    }
+
+    regenerated = regenerate_file_with_context(
+        str(playbook_path),
+        architecture,
+        regeneration_context
+    )
+
+    print("\n=== REGENERATED FILE ===")
+    print(regenerated)
 
 else:
 
