@@ -955,6 +955,12 @@ KNOWN_YAML_KEYS = {
 
 }
 
+KNOWN_PATHS = [
+    "/home/vboxuser/containers/html",
+    "/home/vboxuser/containers/html/index.php",
+    "/home/vboxuser/containers/mysql"
+]
+
 BASE64_RE = re.compile(
     r"^[A-Za-z0-9+/=\r\n]+$"
 )
@@ -1020,6 +1026,119 @@ def semantic_yaml_check(obj):
     walk(obj)
 
     return problems
+
+def run_validation():
+
+    validation_errors = []
+
+    import yaml
+
+    try:
+
+        if not playbook_file.exists():
+
+            validation_errors.append({
+                "type": "missing_playbook"
+            })
+
+        else:
+
+            yaml.safe_load(
+                playbook_file.read_text(
+                    encoding="utf-8"
+                )
+            )
+
+    except Exception as e:
+
+        validation_errors.append({
+            "type": "yaml_parse",
+            "stderr": str(e)
+        })
+
+    validation_errors.extend(
+        validate_cross_file_consistency()
+    )
+
+    return validation_errors
+
+def validate_known_paths(text):
+
+    problems = []
+
+    path_pattern = r"/home/[^\s\"']+"
+
+    paths = re.findall(
+        path_pattern,
+        text
+    )
+
+    for p in paths:
+
+        match = get_close_matches(
+            p,
+            KNOWN_PATHS,
+            n=1,
+            cutoff=0.85
+        )
+
+        if match and p != match[0]:
+
+            problems.append(
+                f"Possible path typo: "
+                f"{p} -> {match[0]}"
+            )
+
+    return problems
+
+def validate_cross_file_consistency():
+
+    errors = []
+
+    if (
+        not playbook_file.exists()
+        or
+        not php_file.exists()
+    ):
+        return errors
+
+    playbook_text = playbook_file.read_text(
+        encoding="utf-8"
+    )
+
+    php_text = php_file.read_text(
+        encoding="utf-8"
+    )
+
+    mysql_db = re.search(
+        r"MYSQL_DATABASE=(\w+)",
+        playbook_text
+    )
+
+    php_db = re.search(
+        r'\$db\s*=\s*"([^"]+)"',
+        php_text
+    )
+
+    if (
+        mysql_db
+        and
+        php_db
+        and
+        mysql_db.group(1)
+        !=
+        php_db.group(1)
+    ):
+
+        errors.append({
+            "type": "cross_file",
+            "playbook_db":
+                mysql_db.group(1),
+            "php_db":
+                php_db.group(1)
+        })
+
+    return errors
 
 # =========================================================
 # Generate Files
@@ -1347,6 +1466,21 @@ YAMLへ修正してください。
 
                             print(p)
 
+        if relative_path.endswith(
+            (".yml", ".yaml")
+        ):
+
+            path_problems = validate_known_paths(
+                decoded
+            )
+
+            for p in path_problems:
+
+                validation_errors.append({
+                    "type": "path_typo",
+                    "detail": p
+                })
+
         safe_write_file(
             SAFE_ROOT,
             relative_path,
@@ -1363,7 +1497,9 @@ YAMLへ修正してください。
 
         validation_errors.append({
             "type": "yaml_autofix_failed",
-            "file": relative_path,
+            "file": str(
+                SAFE_ROOT / relative_path
+            ),
             "stderr": str(e)
         })
 
@@ -1569,7 +1705,7 @@ if (
         "ansible-playbook "
         "-i ansible/inventory.ini "
         "ansible/playbook.yml "
-        "--syntax-check"
+        "--check"
     )
 
     code, stdout, stderr = run_remote_command(
@@ -1662,15 +1798,60 @@ if validation_errors:
             ensure_ascii=False
         ))
 
-if validation_errors:
+MAX_VALIDATION_RETRY = 3
+
+validation_success = False
+
+for attempt in range(MAX_VALIDATION_RETRY):
+
+    new_errors = run_validation()
+
+    if new_errors:
+        validation_errors.extend(
+            new_errors
+        )
+
+    if not validation_errors:
+
+        print(
+            f"Validation success "
+            f"attempt={attempt+1}"
+        )
+        validation_success = True
+        break
 
     regeneration_context = {
         "source": "validation",
         "errors": validation_errors
     }
 
+    target_file = "ansible/playbook.yml"
+
+    for err in validation_errors:
+
+        file_path = err.get("file")
+
+        if file_path:
+            try:
+                rel = (
+                    Path(SAFE_ROOT)
+                    .joinpath(file_path)
+                    .resolve()
+                    .relative_to(
+                        Path(SAFE_ROOT).resolve()
+                    )
+                )
+            except Exception:
+                rel = file_path
+
+            print(f"[ERROR] {rel}")
+
+        else:
+            print(err)
+
+
     regenerated = regenerate_file_with_context(
-        str(playbook_path),
+        target_file,
         architecture,
         regeneration_context
     )
@@ -1678,12 +1859,42 @@ if validation_errors:
     print("\n=== REGENERATED FILE ===")
     print(regenerated)
 
-else:
+    file_value = err.get("file")
 
-    print("\nValidation passed")
+    if not file_value:
+        print(f"[ERROR] {err}")
+        continue
+
+    err_path = Path(file_value)
+
+    try:
+        relative_target = str(
+            err_path.relative_to(SAFE_ROOT)
+        )
+    except ValueError:
+        relative_target = str(err_path)
+
+    print(f"[ERROR] {relative_target}")
+    
+
+    safe_write_file(
+        SAFE_ROOT,
+        relative_target,
+        regenerated
+    )
 
 # =========================================================
 # Final
 # =========================================================
 
-print("\nPipeline completed successfully")
+if validation_success:
+
+    print("\nValidation passed")
+    print("\nPipeline completed successfully")
+
+else:
+
+    print("\nValidation failed")
+    raise RuntimeError(
+        "Validation retry exhausted"
+    )

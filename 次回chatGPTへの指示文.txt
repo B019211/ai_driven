@@ -1,113 +1,125 @@
-AI駆動CI/CD構築 その2 引き継ぎ
+# 明日の作業
 
-■ 現在のフェーズ
-Gemini Pipeline構築
+## 現在地
 
-■ 実装済み
+Review通過済み。
 
-* Review Loop
-* YAML Validation
-* Validation結果取得
-* 修正ファイル生成ロジック
-* regenerate_file_with_context実装（暫定）
+生成ファイル保存も成功。
 
-■ 実装中
+現在は Validation フェーズで停止している。
 
-Remote Validation
+停止原因は生成AIではなく ai_pipeline.py 側。
 
-目標フロー
+---
 
-AI生成
-↓
-Review Loop
-↓
-YAML Validation
-↓
-SCP転送
-↓
-Remote Validation
-↓
-結果取得
-↓
-regenerate_file_with_context
-↓
-再検証
+## 最優先
 
-■ 本日の終了理由
+### err_path の NameError 解消
 
-Gemini Free Tier上限到達
+現在
 
-429 RESOURCE_EXHAUSTED
+```python
+file_value = err.get("file")
 
-gemini-2.5-flash
-20 requests/day
+if file_value:
+    err_path = Path(file_value)
 
-のため実機テスト継続不可
+...
 
-■ 明日の作業
+try:
+    relative_target = str(
+        err_path.relative_to(
+            SAFE_ROOT
+        )
+    )
+```
 
-1.
+になっている。
 
-本日作成した修正ファイルを実行
+file を持たないエラー
 
+```python
+{
+    "type": "ansible_syntax",
+    "stderr": "..."
+}
+```
+
+が来ると err_path が未定義になる。
+
+---
+
+### 修正方針
+
+```python
+file_value = err.get("file")
+
+if not file_value:
+    print(f"[ERROR] {err}")
+    continue
+
+err_path = Path(file_value)
+```
+
+方式へ変更。
+
+---
+
+## 次の確認
+
+再実行
+
+```powershell
 python .\pipeline\ai_pipeline.py
+```
 
-2.
+---
 
-regenerate_file_with_contextが正常動作するか確認
+## 確認ポイント
 
-確認ポイント
+Validation Failed の中身。
 
-* validation結果が取得できるか
-* AIへエラー内容が渡るか
-* 修正版ファイルが生成されるか
+現在予想される残エラーは
 
-3.
+```text
+ansible_syntax
+```
 
-SCP処理追加
+のみ。
 
-想定
+---
 
-local generated file
+## ansible_syntax の確認
+
+現在
+
+```text
+community.general.podman_pod
+couldn't resolve module/action
+```
+
+が発生。
+
+原因候補
+
+1. Validator環境に community.general がない
+2. Ansible 2.16.3 と collection の不整合
+3. containers.podman へ移行必要
+
+---
+
+## 明日のゴール
+
+NameError を解消
+
 ↓
-scp
+
+Validation を最後まで走らせる
+
 ↓
-remote validation server
 
-4.
+ansible_syntax のみ残る状態へ持ち込む
 
-Remote Validation実装
-
-目標
-
-ansible-playbook --syntax-check generated.yml
-
-成功時
-
-PASS
-
-失敗時
-
-ERROR LOG取得
-
-5.
-
-Review LoopへRemote Validation結果を接続
-
-最終目標
-
-生成
 ↓
-レビュー
-↓
-YAML検証
-↓
-Remote検証
-↓
-失敗
-↓
-AI修正
-↓
-再検証
 
-の自己修復ループ完成
+Validator環境側の問題か生成物の問題か切り分ける
