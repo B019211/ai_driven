@@ -25,7 +25,7 @@ MAX_RETRY = 1
 
 SAFE_ROOT = Path("generated/files").resolve()
 
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3.5-flash"
 PIPELINE_PHASE = "learning"
 
 ANSIBLE_CONTROL_NODE = "asbsvr"
@@ -1038,7 +1038,8 @@ def run_validation():
         if not playbook_file.exists():
 
             validation_errors.append({
-                "type": "missing_playbook"
+                "type": "missing_playbook",
+                "file": str(playbook_file)
             })
 
         else:
@@ -1053,6 +1054,7 @@ def run_validation():
 
         validation_errors.append({
             "type": "yaml_parse",
+            "file": str(playbook_file),
             "stderr": str(e)
         })
 
@@ -1701,6 +1703,9 @@ if (
     )
 
     remote_cmd = (
+        "which ansible-playbook && "
+        "ansible-playbook --version && "
+        "ansible-galaxy collection list && "
         f"cd {REMOTE_PROJECT_ROOT} && "
         "ansible-playbook "
         "-i ansible/inventory.ini "
@@ -1804,12 +1809,12 @@ validation_success = False
 
 for attempt in range(MAX_VALIDATION_RETRY):
 
+    validation_errors = []
+
     new_errors = run_validation()
 
     if new_errors:
-        validation_errors.extend(
-            new_errors
-        )
+        validation_errors.extend(new_errors)
 
     if not validation_errors:
 
@@ -1850,38 +1855,53 @@ for attempt in range(MAX_VALIDATION_RETRY):
             print(err)
 
 
-    regenerated = regenerate_file_with_context(
-        target_file,
-        architecture,
-        regeneration_context
-    )
-
-    print("\n=== REGENERATED FILE ===")
-    print(regenerated)
-
-    file_value = err.get("file")
-
-    if not file_value:
-        print(f"[ERROR] {err}")
-        continue
-
-    err_path = Path(file_value)
-
-    try:
-        relative_target = str(
-            err_path.relative_to(SAFE_ROOT)
+        regenerated = regenerate_file_with_context(
+            target_file,
+            architecture,
+            regeneration_context
         )
-    except ValueError:
-        relative_target = str(err_path)
 
-    print(f"[ERROR] {relative_target}")
-    
+        print("\n=== REGENERATED FILE ===")
+        print(regenerated)
 
-    safe_write_file(
-        SAFE_ROOT,
-        relative_target,
-        regenerated
-    )
+        file_value = err.get("file")
+
+        if file_value:
+
+            err_path = Path(file_value)
+
+            if err_path.is_absolute():
+
+                try:
+                    relative_target = str(
+                        err_path.relative_to(SAFE_ROOT)
+                    )
+                except ValueError:
+                    relative_target = target_file
+
+            else:
+                relative_target = file_value
+
+        else:
+            relative_target = target_file
+
+
+        print(f"[ERROR] {relative_target}")
+
+        safe_write_file(
+            SAFE_ROOT,
+            relative_target,
+            regenerated
+        )
+
+        run_command([
+            "scp",
+            "-r",
+            str(SAFE_ROOT),
+            f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated"
+        ])
+
+        continue
 
 # =========================================================
 # Final
