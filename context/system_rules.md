@@ -2,11 +2,9 @@
 
 ## Development Rules
 
-- PHP only
-- No framework
-- PDO mandatory
 - Podman only
 - Ansible deployment only
+- Never generate destructive commands.
 
 ## Infrastructure Rules
 

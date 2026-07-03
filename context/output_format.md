@@ -1,31 +1,13 @@
 # AI Output Format
 
-AI must always return valid JSON.
+AI must return JSON.
 
-Required structure:
+Required fields
 
-```json
-{
-  "summary": "",
-  "files": [
-    {
-      "path": "",
-      "content": ""
-    }
-  ],
-  "commands": [],
-  "risks": []
-}
-```
+summary
 
-Rules:
+files
 
-- JSON only
-- No markdown
-- No explanations outside JSON
-- File paths must be relative
-- Generated code must be deployable
+commands
 
-```
-
-```
+risks

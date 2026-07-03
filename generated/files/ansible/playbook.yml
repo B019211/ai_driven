@@ -1,35 +1,53 @@
 ---
-- name: Deploy LAMP Stack on Podman
-  hosts: rockey8
+- name: Setup PHP environment with PDO and Podman
+  hosts: localhost
   tasks:
-    - name: Create document root directory
-      ansible.builtin.file:
-        path: /home/vboxuser/containers/html
-        state: directory
-        mode: '0755'
+    - name: Update package list
+      apt:
+        update_cache: yes
+      become: yes
 
-    - name: Create lamp-pod
-      containers.podman.podman_pod:
-        name: lamp-pod
-        state: started
+    - name: Install required packages
+      apt:
+        name:
+          - apache2
+          - php
+          - php-pdo
+          - php-mysql
+          - podman
+        state: present
+      become: yes
+
+    - name: Enable Apache mod_rewrite
+      apache2_module:
+        name: rewrite
+        state: present
+      become: yes
+
+    - name: Restart Apache service
+      service:
+        name: apache2
+        state: restarted
+      become: yes
+
+    - name: Run Podman container
+      podman:
+        image: php:8.2-apache
+        name: php-app
+        state: running
         ports:
-          - "8080:80"
+          - "80:80"
+      become: yes
 
-    - name: Run MySQL container
-      containers.podman.podman_container:
-        name: mysql
-        image: docker.io/library/mysql:8.0
-        pod: lamp-pod
-        state: started
-        env:
-          MYSQL_DATABASE: testdb
-          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+    - name: Check container status
+      command: podman ps -a
+      register: container_status
+      become: yes
 
-    - name: Run Web container
-      containers.podman.podman_container:
-        name: web
-        image: docker.io/library/php:8.2-apache
-        pod: lamp-pod
-        state: started
-        volume:
-          - /home/vboxuser/containers/html:/var/www/html:Z
+    - name: Fail if container not running
+      assert:
+        that:
+          - container_status.stdout | regex_search('php-app')
+        fail_msg: "Container failed to start"
+        success_msg: "Container started successfully"
+      become: yes

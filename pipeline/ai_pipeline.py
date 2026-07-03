@@ -2,10 +2,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime
 
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 from json_repair import repair_json
+from jsonschema import validate
+from jsonschema import ValidationError
 
 import base64
 import json
@@ -14,6 +15,7 @@ import re
 import time
 import binascii
 import subprocess
+
 
 # =========================================================
 # Constants
@@ -25,7 +27,7 @@ MAX_RETRY = 1
 
 SAFE_ROOT = Path("generated/files").resolve()
 
-MODEL_NAME = "gemini-3.5-flash"
+MODEL_NAME = "qwen3:8b"
 PIPELINE_PHASE = "learning"
 
 ANSIBLE_CONTROL_NODE = "asbsvr"
@@ -74,8 +76,10 @@ def extract_json(text: str) -> str:
     else:
         end = text.rfind("]")
 
+    # JSON終端が見つからない場合は
+    # 途中までをrepair_jsonへ渡す
     if end == -1:
-        raise ValueError("JSON end not found")
+        return text[start:]
 
     return text[start:end + 1]
 
@@ -109,6 +113,9 @@ def safe_json_loads(text: str) -> dict:
         repaired = sanitize_json_string(
             repaired
         )
+
+        print("\n=== REPAIRED JSON ===")
+        print(repaired[:1500])
 
         return json.loads(repaired)
 
@@ -263,25 +270,34 @@ path:
 - ファイル内容のみ返却
 - markdown禁止
 - explanation禁止
-- base64禁止
 """
 
-    response = client.models.generate_content(
+    response = client.chat.completions.create(
         model=MODEL_NAME,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.0
-        )
+        messages=[
+            {
+                "role": "system",
+                "content": Path(
+                    "prompts/php_engineer.txt"
+                ).read_text(
+                    encoding="utf-8"
+                )
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=0.0,
+        max_tokens=1200
     )
 
-    if not response.text:
-        raise RuntimeError(
-            f"Gemini returned empty response for {path}"
-        )
+    text = response.choices[0].message.content
 
-    return strip_markdown_fence(
-        response.text
-    ).strip()
+    if not text:
+        raise RuntimeError(f"Empty response for {path}")
+
+    return strip_markdown_fence(text).strip()
 
 def regenerate_file_with_context(
     path: str,
@@ -290,15 +306,15 @@ def regenerate_file_with_context(
 ) -> str:
 
     prompt = f"""
-Architecture:
-{architecture}
+Errors:
 
-Context:
-{json.dumps(
-    context_data,
-    ensure_ascii=False,
-    indent=2
-)}
+{json.dumps(context_data["errors"], ensure_ascii=False)}
+
+Target:
+
+{path}
+
+Return file content only.
 
 Target file:
 {path}
@@ -306,27 +322,42 @@ Target file:
 このファイルのみ再生成してください。
 
 重要:
-- Context内のエラーを修正
-- markdown禁止
-- explanation禁止
 - ファイル本文のみ返却
 """
 
-    response = client.models.generate_content(
+    response = client.chat.completions.create(
         model=MODEL_NAME,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.0
-        )
+        messages=[
+            {
+                "role":"system",
+                "content": Path(
+                    "prompts/php_engineer.txt"
+                ).read_text(
+                    encoding="utf-8"
+                )
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=0.0
     )
 
-    if not response.text:
+    content = response.choices[0].message.content
+
+    if content is None:
+        raise RuntimeError("Empty response from model")
+
+    return strip_markdown_fence(content).strip()
+
+    if not response.choices[0].message.content:
         raise RuntimeError(
             f"Gemini returned empty response for {path}"
         )
 
     return strip_markdown_fence(
-        response.text
+        response.choices[0].message.content
     ).strip()
 
 # =========================================================
@@ -422,26 +453,23 @@ def strip_markdown_fence(
 
 load_dotenv()
 
-api_key = os.getenv("GEMINI_API_KEY")
-
-if not api_key:
-    raise RuntimeError(
-        "GEMINI_API_KEY not found"
-    )
-
 
 # =========================================================
-# Gemini Client
+# OpenAI Client
 # =========================================================
 
-client = genai.Client(
-    api_key=api_key
+client = OpenAI(
+    base_url="http://localhost:11434/v1",
+    api_key="ollama",
+    timeout=1800
 )
 
 
 # =========================================================
 # Load Context
 # =========================================================
+
+print("\n===== LOAD CONTEXT =====")
 
 architecture = Path(
     "context/architecture.md"
@@ -463,6 +491,7 @@ reviewer_prompt = Path(
     "prompts/reviewer.txt"
 ).read_text(encoding="utf-8")
 
+print("Context loaded")
 
 # =========================================================
 # Schema
@@ -482,14 +511,15 @@ OUTPUT_SCHEMA = {
                     "path": {
                         "type": "string"
                     },
-                    "content_b64": {
+                    "content": {
                         "type": "string"
                     }
                 },
                 "required": [
                     "path",
-                    "content_b64"
-                ]
+                    "content"
+                ],
+                "additionalProperties": False
             }
         },
         "commands": {
@@ -510,7 +540,8 @@ OUTPUT_SCHEMA = {
         "files",
         "commands",
         "risks"
-    ]
+    ],
+    "additionalProperties": False
 }
 
 
@@ -526,21 +557,28 @@ REVIEW_SCHEMA = {
         "risks": {
             "type": "array",
             "items": {
-                "type": "object",
-                "properties": {
-                    "severity": {
+                "anyOf": [
+                    {
                         "type": "string"
                     },
-                    "description": {
-                        "type": "string"
-                    },
-                    "location": {
-                        "type": "string"
-                    },
-                    "fix": {
-                        "type": "string"
+                    {
+                        "type": "object",
+                        "properties": {
+                            "severity": {
+                                "type": "string"
+                            },
+                            "description": {
+                                "type": "string"
+                            },
+                            "location": {
+                                "type": "string"
+                            },
+                            "fix": {
+                                "type": "string"
+                            }
+                        }
                     }
-                }
+                ]
             }
         }
     },
@@ -548,13 +586,17 @@ REVIEW_SCHEMA = {
         "approved",
         "summary",
         "risks"
-    ]
+    ],
+    "additionalProperties": False
 }
 
 
 # =========================================================
 # Prompt
 # =========================================================
+
+print("\n===== GENERATE PROMPT =====")
+
 
 prompt = f"""
 # Architecture
@@ -615,7 +657,9 @@ inventory.ini の hostname は:
   のみ使用可能。
 
 重要:
-- contentはcontent_b64へbase64で格納
+- filesの各要素は "path" と "content" のみ含めること
+- contentにはUTF-8テキストをそのまま格納すること
+- Base64は禁止
 - UTF-8 printable text only
 - 制御文字禁止
 - binary禁止
@@ -624,49 +668,62 @@ inventory.ini の hostname は:
 - YAMLは厳密構文
 - YAML literal only
 - YAML indentation must use 2 spaces only
-- Never prefix keys with numbers
+
 - Every YAML key must start at line head
-- Never concatenate YAML keys
-- owner and group must be separate lines
-- Never prefix keys with numbers
+
+
+
 - Generate strictly valid YAML
-- YAML must be parseable by yaml.safe_load()
-- key: value の後に別key連結禁止
+
+
 - ansible module行の改行省略禁止
 - "{{ variable }}" は必ずダブルクォートで囲む
 """
 
+print(f"Prompt length = {len(prompt):,} chars")
 
 # =========================================================
 # Generate
 # =========================================================
 
-response = client.models.generate_content(
-    model=MODEL_NAME,
-    contents=prompt,
-    config=types.GenerateContentConfig(
-        temperature=0.2,
-        response_mime_type="application/json",
-        response_schema=OUTPUT_SCHEMA,
-        system_instruction="""
-あなたは熟練のソフトウェアエンジニアです。
-
-要件を満たす実装を生成してください。
-
-重要:
-- JSON only
-- markdown禁止
-- learning phase
-- CI/CD完走優先
-- シンプル実装優先
-"""
-    )
+system_prompt = Path(
+    "prompts/architect.txt"
+).read_text(
+    encoding="utf-8"
 )
 
-raw_output = response.text
+print("\n===== GENERATE START =====")
+start = time.time()
+
+response = client.chat.completions.create(
+    model=MODEL_NAME,
+    messages=[
+        {
+            "role": "system",
+            "content": system_prompt
+        },
+        {
+            "role": "user",
+            "content": prompt
+        }
+    ],
+    temperature=0.1,
+    max_tokens=1200,
+    stop=[
+       "\n```"
+    ]
+)
+
+elapsed = time.time() - start
+print(f"Generate finished ({elapsed:.1f}s)")
+
+raw_output = response.choices[0].message.content
 
 print("\n=== RAW OUTPUT ===")
-print(raw_output)
+print(raw_output[:3000])
+
+if len(raw_output) > 3000:
+    print("\n...(truncated)...")
 
 json_text = extract_json(raw_output)
 
@@ -675,6 +732,26 @@ json_text = sanitize_json_string(
 )
 
 data = safe_json_loads(json_text)
+
+required_defaults = {
+    "commands": [],
+    "risks": [],
+    "files": [],
+    "summary": ""
+}
+
+for key, default in required_defaults.items():
+    data.setdefault(key, default)
+
+try:
+    validate(
+        instance=data,
+        schema=OUTPUT_SCHEMA
+    )
+except ValidationError as e:
+    raise RuntimeError(
+        f"Output schema validation failed:\n{e}"
+    )
 
 if not isinstance(data, dict):
     raise RuntimeError(
@@ -689,63 +766,53 @@ if not isinstance(data, dict):
 retry_count = 0
 
 while True:
+    print("\n===== REVIEW =====")
+    print(f"Attempt {retry_count+1}")
 
     review_request = f"""
-# Review Rules
+Generated JSON:
 
-{review_rules}
+{json.dumps(data, ensure_ascii=False)}
 
-# Reviewer Prompt
-
-{reviewer_prompt}
-
-# Generated Output
-
-{json.dumps(data, indent=2, ensure_ascii=False)}
-
-Review this output.
+Review it.
+Return JSON only.
 """
 
     print(
         f"\n=== REVIEW ATTEMPT {retry_count + 1} ==="
     )
 
-    review_response = client.models.generate_content(
+    print("Review request...")
+    start = time.time()
+
+    review_response = client.chat.completions.create(
         model=MODEL_NAME,
-        contents=review_request,
-        config=types.GenerateContentConfig(
-            temperature=0.1,
-            response_mime_type="application/json",
-            response_schema=REVIEW_SCHEMA,
-            system_instruction="""
-あなたは学習環境向け reviewer です。
-
-現在は localhost 上の
-閉域開発環境です。
-
-目的:
-- CI/CDパイプライン完走
-- JSON安定生成
-- retry loop安定化
-
-BLOCKERのみ停止対象。
-
-HIGHはwarning扱い。
-
-改善提案は行ってよいが、
-可能な限り approved=true を返してください。
-
-本当に危険な操作のみ reject:
-
-- rm -rf
-- malware
-- credential exfiltration
-- destructive shell
-"""
-        )
+        messages=[
+            {
+                "role": "system",
+                "content": reviewer_prompt
+            },
+            {
+                "role": "user",
+                "content": review_request
+            }
+        ],
+        temperature=0.0
     )
 
-    review_raw = review_response.text
+    print(
+        f"Review finished "
+        f"({time.time()-start:.1f}s)"
+    )
+
+    response.choices[0].message.content
+
+    review_raw =  (
+        review_response
+        .choices[0]
+        .message
+        .content
+    )
 
     print("\n=== REVIEW RAW ===")
     print(review_raw)
@@ -762,6 +829,17 @@ HIGHはwarning扱い。
         review_json
     )
 
+    try:
+        validate(
+            instance=review_data,
+            schema=REVIEW_SCHEMA
+        )
+
+    except ValidationError as e:
+        raise RuntimeError(
+            f"Review schema invalid:\n{e}"
+        )
+
     risks = review_data.get(
         "risks",
         []
@@ -772,6 +850,11 @@ HIGHはwarning扱い。
     for r in risks:
 
         if not isinstance(r, dict):
+            blocking.append({
+                "severity": "WARNING",
+                "description": r
+            })
+
             continue
 
         severity = r.get("severity")
@@ -815,20 +898,17 @@ HIGHはwarning扱い。
     )
 
     fix_prompt = f"""
-前回JSONを修正してください。
+Fix this JSON.
 
-重要:
-- 元JSON構造維持
-- 必要最小限修正
-- filesを省略禁止
-- markdown禁止
-- content_b64を維持
+Current JSON:
 
-前回JSON:
 {json.dumps(data, ensure_ascii=False)}
 
-レビュー結果:
-{json.dumps(review_data, ensure_ascii=False)}
+Errors:
+
+{json.dumps(blocking, ensure_ascii=False)}
+
+Return JSON only.
 """
 
     retry_temp = max(
@@ -836,23 +916,31 @@ HIGHはwarning扱い。
         0.3 - (retry_count * 0.1)
     )
 
-    fix_response = client.models.generate_content(
+    fix_response = client.chat.completions.create(
         model=MODEL_NAME,
-        contents=fix_prompt,
-        config=types.GenerateContentConfig(
-            temperature=retry_temp,
-            response_mime_type="application/json",
-            response_schema=OUTPUT_SCHEMA,
-            system_instruction="""
-あなたは修正専門AIです。
-
-全面再生成禁止。
-必要最小限修正のみ。
-"""
-        )
+        messages=[
+            {
+                "role": "system",
+                "content": Path(
+                    "prompts/fixer.txt"
+                ).read_text(
+                    encoding="utf-8"
+                )
+            },
+            {
+                "role": "user",
+                "content": fix_prompt
+            }
+        ],
+        temperature=retry_temp
     )
 
-    fix_raw = fix_response.text
+    fix_raw =  (
+        fix_response
+        .choices[0]
+        .message
+        .content
+    )
 
     print("\n=== FIX RAW ===")
     print(fix_raw)
@@ -869,6 +957,16 @@ HIGHはwarning扱い。
         fixed_json
     )
 
+    try:
+        validate(
+            instance=data,
+            schema=OUTPUT_SCHEMA
+        )
+
+    except ValidationError as e:
+        raise RuntimeError(
+            f"Fixed JSON schema invalid:\n{e}"
+        )
 
 # =========================================================
 # Save Logs
@@ -921,14 +1019,23 @@ path:
 - explanation禁止
 """
 
-    response = client.models.generate_content(
+    response = client.chat.completions.create(
         model=MODEL_NAME,
-        contents=prompt
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=0.0
     )
 
-    return strip_markdown_fence(
-        response.text
-    ).strip()
+    content = response.choices[0].message.content
+
+    if content is None:
+        raise RuntimeError("Empty response from model")
+
+    return strip_markdown_fence(content).strip()
 
 
 # =========================================================
@@ -1044,11 +1151,18 @@ def run_validation():
 
         else:
 
-            yaml.safe_load(
+            parsed = yaml.safe_load(
                 playbook_file.read_text(
                     encoding="utf-8"
                 )
             )
+
+            if not isinstance(parsed, list):
+                validation_errors.append({
+                    "type": "invalid_playbook",
+                    "file": str(playbook_file),
+                    "stderr": "Playbook must be a YAML list."
+                })
 
     except Exception as e:
 
@@ -1061,6 +1175,29 @@ def run_validation():
     validation_errors.extend(
         validate_cross_file_consistency()
     )
+
+    if inventory_file.exists() and playbook_file.exists():
+
+        remote_cmd = (
+            f"cd {REMOTE_PROJECT_ROOT} && "
+            "ansible-playbook "
+            "-i ansible/inventory.ini "
+            "ansible/playbook.yml "
+            "--syntax-check"
+        )
+
+        code, stdout, stderr = run_remote_command(
+            ANSIBLE_CONTROL_NODE,
+            remote_cmd
+        )
+
+        if code != 0:
+
+            validation_errors.append({
+                "type": "ansible_syntax",
+                "file": str(playbook_file),
+                "stderr": stderr
+            })
 
     return validation_errors
 
@@ -1170,11 +1307,16 @@ for file in data.get("files", []):
 
         relative_path = file.get("path")
 
+        print(
+            f"\n===== FILE ===== "
+            f"{relative_path}"
+        )
+
         if relative_path:
             relative_path = relative_path.strip()
 
-        content_b64 = file.get(
-            "content_b64"
+        content = file.get(
+            "content"
         )
 
         if not relative_path:
@@ -1182,109 +1324,105 @@ for file in data.get("files", []):
             print("Skip invalid path")
             continue
 
-        if not content_b64:
-
+        if not content:
             print(
                 f"Skip empty content: {relative_path}"
             )
-
             continue
 
-        # =================================================
-        # Base64 validation
-        # =================================================
+        # # =================================================
+        # # Base64 validation
+        # # =================================================
 
-        if not validate_base64(content_b64):
+        # if not validate_base64(content_b64):
 
-            print(
-                f"Invalid base64 detected: {relative_path}"
-            )
+        #     print(
+        #         f"Invalid base64 detected: {relative_path}"
+        #     )
 
-            raise ValueError(
-                f"Broken base64: {relative_path}"
-            )
+        #     raise ValueError(
+        #         f"Broken base64: {relative_path}"
+        #     )
 
-        # =================================================
-        # Base64 decode
-        # =================================================
+        # # =================================================
+        # # Base64 decode
+        # # =================================================
 
-        try:
+        # try:
 
-            decoded = decode_b64(
-                content_b64
-            )
+        #     decoded = content
 
-        except Exception:
+        # except Exception:
 
-            print(
-                f"\n=== BROKEN BASE64 DETECTED ===\n"
-                f"{relative_path}"
-            )
+        #     print(
+        #         f"\n=== BROKEN BASE64 DETECTED ===\n"
+        #         f"{relative_path}"
+        #     )
 
-            file_regen_prompt = f"""
-        以下ファイルを再生成してください。
+        #     file_regen_prompt = f"""
+        # 以下ファイルを再生成してください。
 
-        path:
-        {relative_path}
+        # path:
+        # {relative_path}
 
-        重要:
-        - content本体を生成
-        - base64ではなく生テキスト生成
-        - markdown禁止
-        - explanation禁止
+        # 重要:
+        # - content本体を生成
+        # - base64ではなく生テキスト生成
+        # - markdown禁止
+        # - explanation禁止
 
-        返却はファイル内容のみ
-        """
+        # 返却はファイル内容のみ
+        # """
 
 
-            decoded = regenerate_file_with_context(
-                relative_path,
-                architecture,
-                review_data
-            )
+        #     decoded = regenerate_file_with_context(
+        #         relative_path,
+        #         architecture,
+        #         review_data
+        #     )
 
-            print(
-                "\n=== BASE64 AUTO FIXED ==="
-            )
+        #     print(
+        #         "\n=== BASE64 AUTO FIXED ==="
+        #     )
 
             
 
-        # UTF-8 normalize
-        decoded = decoded.encode(
-            "utf-8",
-            errors="ignore"
-        ).decode(
-            "utf-8",
-            errors="ignore"
-        )
+        # # UTF-8 normalize
+        # decoded = decoded.encode(
+        #     "utf-8",
+        #     errors="ignore"
+        # ).decode(
+        #     "utf-8",
+        #     errors="ignore"
+        # )
 
-        # remove dangerous control chars only
-        decoded = "".join(
-            c for c in decoded
-            if (
-                c == "\n"
-                or c == "\r"
-                or c == "\t"
-                or ord(c) >= 32
-            )
-        )
+        # # remove dangerous control chars only
+        # decoded = "".join(
+        #     c for c in decoded
+        #     if (
+        #         c == "\n"
+        #         or c == "\r"
+        #         or c == "\t"
+        #         or ord(c) >= 32
+        #     )
+        # )
 
-        # tab -> spaces
-        decoded = decoded.replace(
-            "\t",
-            "    "
-        )
+        # # tab -> spaces
+        # decoded = decoded.replace(
+        #     "\t",
+        #     "    "
+        # )
 
-        # normalize newline
-        decoded = decoded.replace(
-            "\r\n",
-            "\n"
-        )
+        # # normalize newline
+        # decoded = decoded.replace(
+        #     "\r\n",
+        #     "\n"
+        # )
 
-        decoded = decoded.replace(
-            "\r",
-            "\n"
-        )
+        # decoded = decoded.replace(
+        #     "\r",
+        #     "\n"
+        # )
 
         # =================================================
         # YAML targeted repair
@@ -1349,25 +1487,14 @@ for file in data.get("files", []):
                     print(decoded)
 
                     yaml_fix_prompt = f"""
-このYAMLは構文エラーです。
+Fix this YAML.
 
-必ず yaml.safe_load() 可能な
-YAMLへ修正してください。
+Return YAML only.
 
-重要:
-- YAML only
-- markdown禁止
-- explanation禁止
-- indentation厳守
-- key連結禁止
-- owner/groupは別行
-- ansible moduleは改行必須
-
-壊れているYAML:
 {decoded}
 
-エラー:
-{str(e)}
+Error:
+{e}
 """
 
                     import time
@@ -1376,18 +1503,26 @@ YAMLへ修正してください。
 
                     for attempt in range(3):
                         try:
-
-
-                                fix_yaml_response = (
-                                    client.models.generate_content(
-                                        model=MODEL_NAME,
-                                        contents=yaml_fix_prompt,
-                                        config=types.GenerateContentConfig(
-                                            temperature=0.05
-                                        )
-                                    )
+                            fix_yaml_response = (
+                                client.chat.completions.create(
+                                    model=MODEL_NAME,
+                                    messages=[
+                                        {
+                                            "role":"system",
+                                            "content": Path(
+                                                "prompts/fixer.txt"
+                                            ).read_text(
+                                                encoding="utf-8"
+                                            )
+                                        },
+                                        {
+                                            "role":"user",
+                                            "content":yaml_fix_prompt
+                                        }
+                                    ],
+                                    temperature=0.0
                                 )
-                                break
+                            )
                         
                         except Exception as e:
                             
@@ -1407,13 +1542,13 @@ YAMLへ修正してください。
 
 
                     decoded = (
-                        fix_yaml_response.text
-                        .strip()
+                        fix_yaml_response
+                        .choices[0]
+                        .message
+                        .content
                     )
 
-                    decoded = strip_markdown_fence(
-                        fix_yaml_response.text
-                    )
+                    decoded = strip_markdown_fence(decoded)
 
                     # markdown除去
                     decoded = re.sub(
@@ -1482,6 +1617,9 @@ YAMLへ修正してください。
                     "type": "path_typo",
                     "detail": p
                 })
+
+        print(f"Decoded size : {len(decoded)}")
+        print(decoded[:300])
 
         safe_write_file(
             SAFE_ROOT,
@@ -1653,6 +1791,21 @@ try:
             "file": str(inventory_file)
         })
 
+    else:
+
+        inventory_text = inventory_file.read_text(
+            encoding="utf-8"
+        )
+
+        if "asbsvr" not in inventory_text \
+        or "rockey8" not in inventory_text:
+
+            validation_errors.append({
+                "type": "invalid_inventory",
+                "file": str(inventory_file),
+                "stderr": "Inventory format is invalid."
+            })
+
     if not playbook_file.exists():
 
         validation_errors.append({
@@ -1678,6 +1831,8 @@ except Exception as e:
 # ---------------------------------------------------------
 # Upload generated files
 # ---------------------------------------------------------
+
+print("Remote validation...")
 
 run_command([
     "scp",
@@ -1749,12 +1904,13 @@ if (
             )
 
         else:
-
             validation_errors.append({
                 "type": "ansible_syntax",
+                "file": str(playbook_file),
                 "stderr": stderr
             })
 
+print("Remote validation finished")
 
 # # ---------------------------------------------------------
 
@@ -1809,12 +1965,11 @@ validation_success = False
 
 for attempt in range(MAX_VALIDATION_RETRY):
 
-    validation_errors = []
+    print(
+        f"\n===== VALIDATION ATTEMPT {attempt + 1} ====="
+    )
 
-    new_errors = run_validation()
-
-    if new_errors:
-        validation_errors.extend(new_errors)
+    validation_errors = run_validation()
 
     if not validation_errors:
 
@@ -1870,17 +2025,12 @@ for attempt in range(MAX_VALIDATION_RETRY):
 
             err_path = Path(file_value)
 
-            if err_path.is_absolute():
-
-                try:
-                    relative_target = str(
-                        err_path.relative_to(SAFE_ROOT)
-                    )
-                except ValueError:
-                    relative_target = target_file
-
-            else:
-                relative_target = file_value
+            try:
+                relative_target = str(
+                    err_path.relative_to(SAFE_ROOT)
+                )
+            except ValueError:
+                relative_target = target_file
 
         else:
             relative_target = target_file
@@ -1902,6 +2052,7 @@ for attempt in range(MAX_VALIDATION_RETRY):
         ])
 
         continue
+
 
 # =========================================================
 # Final
