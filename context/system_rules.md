@@ -4,16 +4,14 @@
 
 - Podman only
 - Ansible deployment only
+- Never use Docker
 - Never generate destructive commands.
+- Never generate markdown
+- Never generate explanations
+- UTF-8 only
+- Do not generate files other than those requested by the task.
 
-## Infrastructure Rules
+必要最低限の内容でよい。
 
-- Execution node is rockey8
-- Control node is asbsvr
-- Web container is inside lamp-pod
-
-## AI Rules
-
-- AI must generate deployable code
-- AI must avoid destructive commands
-- AI must output structured responses
+途中省略は禁止。
+Empty content is prohibited.

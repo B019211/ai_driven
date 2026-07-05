@@ -12,3 +12,10 @@ Rules
 - key: value の後に別key連結禁止
 - owner and group must be separate lines
 - Never concatenate YAML keys
+
+Return a valid Ansible playbook.
+The top level MUST be a YAML list.
+The first line MUST be:
+---
+The second line MUST begin with
+- name:

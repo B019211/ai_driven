@@ -13,3 +13,6 @@
 
 再度、出力とソースを提示します。
 
+
+【Windowsバックグラウンド起動】
+Start-Process "ollama" -ArgumentList "serve" -WindowStyle Hidden

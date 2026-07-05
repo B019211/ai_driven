@@ -117,8 +117,21 @@ def safe_json_loads(text: str) -> dict:
         print("\n=== REPAIRED JSON ===")
         print(repaired[:1500])
 
-        return json.loads(repaired)
+        try:
+            return json.loads(repaired)
 
+        except json.JSONDecodeError as e:
+
+            Path("logs").mkdir(exist_ok=True)
+
+            Path("logs/broken_json.txt").write_text(
+                repaired,
+                encoding="utf-8"
+            )
+
+            raise RuntimeError(
+                f"JSON repair failed: {e}"
+            )
 
 def encode_b64(content: str) -> str:
     return base64.b64encode(
@@ -289,7 +302,7 @@ path:
             }
         ],
         temperature=0.0,
-        max_tokens=1200
+        max_tokens=8192
     )
 
     text = response.choices[0].message.content
@@ -305,51 +318,115 @@ def regenerate_file_with_context(
     context_data
 ) -> str:
 
+    print("=== REGENERATE START ===")
+    print(path)
+
+    current_file = (
+        SAFE_ROOT / path
+    ).read_text(
+        encoding="utf-8"
+    )
+
     prompt = f"""
-Errors:
+# Architecture
 
-{json.dumps(context_data["errors"], ensure_ascii=False)}
+{architecture}
 
-Target:
+Current file
 
-{path}
+{current_file}
 
-Return file content only.
+# System Rules
+
+{rules}
+
+# Output Format
+
+{format_rules}
+
+# Validation Errors
+
+{json.dumps(context_data["errors"], indent=2, ensure_ascii=False)}
+
+# stdout
+
+{context_data.get("stdout","")}
+
+# stderr
+
+{context_data.get("stderr","")}
+
+- Use ONLY modules available in the validation environment.
+- Use fully qualified collection names (FQCN).
+- Do NOT invent module names.
+- Preserve all previous fixes.
+- Modify only the lines related to the validation error.
 
 Target file:
 {path}
 
-このファイルのみ再生成してください。
+Fix ONLY this file.
+You MUST preserve every previous fix unless the validation log explicitly says that fix is wrong.
+Do NOT revert previously corrected lines.
+Modify only the lines directly related to the reported validation errors.
+Use the validation stdout/stderr as the highest priority source of truth.
+Return ONLY file content.
+Do NOT return JSON.
+Do NOT regenerate other files.
+Do NOT explain your changes.
+Do NOT use Markdown.
 
-重要:
-- ファイル本文のみ返却
+The following error MUST be fixed.
+ERROR:
+ERROR! couldn't resolve module/action 'podman_pod'
+This means the module name is invalid.
+You MUST replace the invalid module with a valid Ansible module.
+Do NOT keep podman_pod.
+
+
+
 """
 
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {
-                "role":"system",
-                "content": Path(
-                    "prompts/php_engineer.txt"
-                ).read_text(
-                    encoding="utf-8"
-                )
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        temperature=0.0
-    )
+    print("Calling Ollama...")
+
+    try:
+
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {
+                    "role":"system",
+                    "content": Path(
+                        "prompts/php_engineer.txt"
+                    ).read_text(
+                        encoding="utf-8"
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.0
+        )
+
+        print("Ollama returned.")
+
+    except Exception as e:
+
+        print("OLLAMA ERROR")
+        print(e)
+        raise
 
     content = response.choices[0].message.content
+    print("=== REGENERATE END ===")
 
     if content is None:
         raise RuntimeError("Empty response from model")
 
     return strip_markdown_fence(content).strip()
+
+
 
     if not response.choices[0].message.content:
         raise RuntimeError(
@@ -461,7 +538,7 @@ load_dotenv()
 client = OpenAI(
     base_url="http://localhost:11434/v1",
     api_key="ollama",
-    timeout=1800
+    timeout=900
 )
 
 
@@ -490,6 +567,11 @@ review_rules = Path(
 reviewer_prompt = Path(
     "prompts/reviewer.txt"
 ).read_text(encoding="utf-8")
+
+task = Path(
+    "context/task.md"
+).read_text(encoding="utf-8")
+
 
 print("Context loaded")
 
@@ -613,71 +695,8 @@ prompt = f"""
 
 # Task
 
-現在は learning phase です。
+{task}
 
-目的:
-- CI/CDパイプライン完走
-- JSON安定生成
-- review loop安定化
-- file生成成功
-
-本番品質より、
-最後まで通ることを優先してください。
-
-現在の構成を改善してください。
-
-以下をJSONで返してください:
-
-- summary
-- files
-- commands
-- risks
-
-filesには生成すべきファイルを含めてください。
-
-生成可能なpathは以下のみ:
-
-* ansible/playbook.yml
-* ansible/inventory.ini
-* src/index.php
-
-それ以外のpathは禁止。
-
-特に:
-
-* deploy.yml
-* html/index.php
-* 任意path
-  は禁止。
-
-inventory.ini の hostname は:
-
-* asbsvr
-* rockey8
-  のみ使用可能。
-
-重要:
-- filesの各要素は "path" と "content" のみ含めること
-- contentにはUTF-8テキストをそのまま格納すること
-- Base64は禁止
-- UTF-8 printable text only
-- 制御文字禁止
-- binary禁止
-- markdown禁止
-- JSON only
-- YAMLは厳密構文
-- YAML literal only
-- YAML indentation must use 2 spaces only
-
-- Every YAML key must start at line head
-
-
-
-- Generate strictly valid YAML
-
-
-- ansible module行の改行省略禁止
-- "{{ variable }}" は必ずダブルクォートで囲む
 """
 
 print(f"Prompt length = {len(prompt):,} chars")
@@ -695,35 +714,64 @@ system_prompt = Path(
 print("\n===== GENERATE START =====")
 start = time.time()
 
-response = client.chat.completions.create(
-    model=MODEL_NAME,
-    messages=[
-        {
-            "role": "system",
-            "content": system_prompt
-        },
-        {
-            "role": "user",
-            "content": prompt
-        }
-    ],
-    temperature=0.1,
-    max_tokens=1200,
-    stop=[
-       "\n```"
-    ]
-)
+print("Calling Ollama...")
+
+try:
+
+    response = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=0.0,
+        max_tokens=8192
+    #    stop=[
+    #       "\n```"
+    #    ]
+    )
+    print("Ollama returned")
+
+except Exception as e:
+    print("Ollama call failed")
+    raise RuntimeError(
+        f"Failed to call Ollama: {e}"
+    )
 
 elapsed = time.time() - start
 print(f"Generate finished ({elapsed:.1f}s)")
 
-raw_output = response.choices[0].message.content
+choice = response.choices[0]
 
-print("\n=== RAW OUTPUT ===")
-print(raw_output[:3000])
+print(choice)
 
-if len(raw_output) > 3000:
-    print("\n...(truncated)...")
+raw_output = (
+    choice.message.content
+    or getattr(choice.message, "reasoning_content", None)
+)
+
+print("finish_reason =", response.choices[0].finish_reason)
+print(response.choices[0])
+print("content =", repr(raw_output))
+
+if not raw_output:
+
+    if choice.finish_reason == "length":
+        raise RuntimeError(
+            "Generation reached max_tokens before producing output. "
+            "Increase max_tokens or disable thinking mode."
+        )
+
+    raise RuntimeError(
+        "Model returned empty response."
+    )
+
 
 json_text = extract_json(raw_output)
 
@@ -968,6 +1016,31 @@ Return JSON only.
             f"Fixed JSON schema invalid:\n{e}"
         )
 
+    required_paths = {
+        "ansible/playbook.yml",
+        "ansible/inventory.ini",
+        "src/index.php"
+    }
+
+    generated_paths = {
+        f["path"]
+        for f in data["files"]
+    }
+
+    missing = required_paths - generated_paths
+
+    if missing:
+        print(f"Missing files: {missing}")
+
+        for path in missing:
+
+            content = regenerate_file(path)
+
+            data["files"].append({
+                "path": path,
+                "content": content
+            })
+
 # =========================================================
 # Save Logs
 # =========================================================
@@ -1196,6 +1269,7 @@ def run_validation():
             validation_errors.append({
                 "type": "ansible_syntax",
                 "file": str(playbook_file),
+                "stdout": stdout,
                 "stderr": stderr
             })
 
@@ -1334,8 +1408,7 @@ for file in data.get("files", []):
         # # Base64 validation
         # # =================================================
 
-        # if not validate_base64(content_b64):
-
+        # if not validate_base64(decode_b64):
         #     print(
         #         f"Invalid base64 detected: {relative_path}"
         #     )
@@ -1350,7 +1423,7 @@ for file in data.get("files", []):
 
         # try:
 
-        #     decoded = content
+        #     content = content
 
         # except Exception:
 
@@ -1375,7 +1448,7 @@ for file in data.get("files", []):
         # """
 
 
-        #     decoded = regenerate_file_with_context(
+        #     content = regenerate_file_with_context(
         #         relative_path,
         #         architecture,
         #         review_data
@@ -1388,7 +1461,7 @@ for file in data.get("files", []):
             
 
         # # UTF-8 normalize
-        # decoded = decoded.encode(
+        # content = content.encode(
         #     "utf-8",
         #     errors="ignore"
         # ).decode(
@@ -1397,8 +1470,8 @@ for file in data.get("files", []):
         # )
 
         # # remove dangerous control chars only
-        # decoded = "".join(
-        #     c for c in decoded
+        # content = "".join(
+        #     c for c in content
         #     if (
         #         c == "\n"
         #         or c == "\r"
@@ -1408,18 +1481,18 @@ for file in data.get("files", []):
         # )
 
         # # tab -> spaces
-        # decoded = decoded.replace(
+        # content = content.replace(
         #     "\t",
         #     "    "
         # )
 
         # # normalize newline
-        # decoded = decoded.replace(
+        # content = content.replace(
         #     "\r\n",
         #     "\n"
         # )
 
-        # decoded = decoded.replace(
+        # content = content.replace(
         #     "\r",
         #     "\n"
         # )
@@ -1432,14 +1505,20 @@ for file in data.get("files", []):
             (".yml", ".yaml")
         ):
 
-            decoded = repair_yaml_text(
-                decoded
-            )
+            print("===== BEFORE REPAIR =====")
+            print(content)
 
-        if not decoded.strip():
+            # content = repair_yaml_text(
+            #     content
+            # )
+
+            print("===== AFTER REPAIR =====")
+            print(content)
+
+        if not content.strip():
 
             raise ValueError(
-                f"Empty decoded file: {relative_path}"
+                f"Empty content file: {relative_path}"
             )
 
         if relative_path not in ALLOWED_PATHS:
@@ -1459,19 +1538,19 @@ for file in data.get("files", []):
             try:
 
                 parsed_yaml = yaml.safe_load(
-                    decoded
+                    content
                 )
 
             except yaml.YAMLError:
 
                 try:
 
-                    decoded = repair_yaml_text(
-                        decoded
+                    content = repair_yaml_text(
+                        content
                     )
 
                     parsed_yaml = yaml.safe_load(
-                        decoded
+                        content
                     )
 
                     print(
@@ -1484,14 +1563,14 @@ for file in data.get("files", []):
                         "\n=== INVALID YAML BEFORE SAVE ==="
                     )
 
-                    print(decoded)
+                    print(content)
 
                     yaml_fix_prompt = f"""
 Fix this YAML.
 
 Return YAML only.
 
-{decoded}
+{content}
 
 Error:
 {e}
@@ -1541,44 +1620,44 @@ Error:
                         )
 
 
-                    decoded = (
+                    content = (
                         fix_yaml_response
                         .choices[0]
                         .message
                         .content
                     )
 
-                    decoded = strip_markdown_fence(decoded)
+                    content = strip_markdown_fence(content)
 
                     # markdown除去
-                    decoded = re.sub(
+                    content = re.sub(
                         r"^```yaml\s*",
                         "",
-                        decoded,
+                        content,
                         flags=re.MULTILINE
                     )
 
-                    decoded = re.sub(
+                    content = re.sub(
                         r"^```\s*",
                         "",
-                        decoded,
+                        content,
                         flags=re.MULTILINE
                     )
 
-                    decoded = re.sub(
+                    content = re.sub(
                         r"\s*```$",
                         "",
-                        decoded
+                        content
                     )
 
                     print(
                         "\n=== YAML AUTO FIXED ==="
                     )
 
-                    print(decoded)
+                    print(content)
 
                     parsed_yaml = yaml.safe_load(
-                        decoded
+                        content
                     )
 
 
@@ -1608,7 +1687,7 @@ Error:
         ):
 
             path_problems = validate_known_paths(
-                decoded
+                content
             )
 
             for p in path_problems:
@@ -1618,13 +1697,13 @@ Error:
                     "detail": p
                 })
 
-        print(f"Decoded size : {len(decoded)}")
-        print(decoded[:300])
+        print(f"Decoded size : {len(content)}")
+        print(content[:300])
 
         safe_write_file(
             SAFE_ROOT,
             relative_path,
-            decoded
+            content
         )
 
     except Exception as e:
@@ -1660,8 +1739,6 @@ playbook_file = (
 php_file = (
     SAFE_ROOT / "src/index.php"
 )
-
-
 
 # =========================================================
 # Validation
@@ -1865,7 +1942,7 @@ if (
         "ansible-playbook "
         "-i ansible/inventory.ini "
         "ansible/playbook.yml "
-        "--check"
+        "--syntax-check"
     )
 
     code, stdout, stderr = run_remote_command(
@@ -1982,33 +2059,28 @@ for attempt in range(MAX_VALIDATION_RETRY):
 
     regeneration_context = {
         "source": "validation",
-        "errors": validation_errors
+        "errors": validation_errors,
+        "stdout": stdout,
+        "stderr": stderr
     }
-
-    target_file = "ansible/playbook.yml"
 
     for err in validation_errors:
 
-        file_path = err.get("file")
+        file_value = err.get("file")
 
-        if file_path:
+        if file_value:
             try:
-                rel = (
-                    Path(SAFE_ROOT)
-                    .joinpath(file_path)
-                    .resolve()
-                    .relative_to(
-                        Path(SAFE_ROOT).resolve()
+                target_file = str(
+                    Path(file_value).resolve().relative_to(
+                        SAFE_ROOT.resolve()
                     )
                 )
-            except Exception:
-                rel = file_path
-
-            print(f"[ERROR] {rel}")
-
+            except ValueError:
+                target_file = "ansible/playbook.yml"
         else:
-            print(err)
+            target_file = "ansible/playbook.yml"
 
+        print(f"[ERROR] {target_file}")
 
         regenerated = regenerate_file_with_context(
             target_file,
@@ -2016,31 +2088,9 @@ for attempt in range(MAX_VALIDATION_RETRY):
             regeneration_context
         )
 
-        print("\n=== REGENERATED FILE ===")
-        print(regenerated)
-
-        file_value = err.get("file")
-
-        if file_value:
-
-            err_path = Path(file_value)
-
-            try:
-                relative_target = str(
-                    err_path.relative_to(SAFE_ROOT)
-                )
-            except ValueError:
-                relative_target = target_file
-
-        else:
-            relative_target = target_file
-
-
-        print(f"[ERROR] {relative_target}")
-
         safe_write_file(
             SAFE_ROOT,
-            relative_target,
+            target_file,
             regenerated
         )
 
@@ -2050,8 +2100,6 @@ for attempt in range(MAX_VALIDATION_RETRY):
             str(SAFE_ROOT),
             f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated"
         ])
-
-        continue
 
 
 # =========================================================

@@ -1,53 +1,15 @@
 ---
-- name: Setup PHP environment with PDO and Podman
-  hosts: localhost
+- name: Deploy LAMP stack with Podman
+  hosts: all
   tasks:
-    - name: Update package list
-      apt:
-        update_cache: yes
-      become: yes
+    - name: Create podman pod
+      shell: podman pod create --name lamp-pod
+      register: pod_result
 
-    - name: Install required packages
-      apt:
-        name:
-          - apache2
-          - php
-          - php-pdo
-          - php-mysql
-          - podman
-        state: present
-      become: yes
+    - name: Run MySQL container
+      shell: podman run -d --name mysql --pod lamp-pod -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=testdb mysql:8.0
+      register: mysql_result
 
-    - name: Enable Apache mod_rewrite
-      apache2_module:
-        name: rewrite
-        state: present
-      become: yes
-
-    - name: Restart Apache service
-      service:
-        name: apache2
-        state: restarted
-      become: yes
-
-    - name: Run Podman container
-      podman:
-        image: php:8.2-apache
-        name: php-app
-        state: running
-        ports:
-          - "80:80"
-      become: yes
-
-    - name: Check container status
-      command: podman ps -a
-      register: container_status
-      become: yes
-
-    - name: Fail if container not running
-      assert:
-        that:
-          - container_status.stdout | regex_search('php-app')
-        fail_msg: "Container failed to start"
-        success_msg: "Container started successfully"
-      become: yes
+    - name: Run PHP container
+      shell: podman run -d --name php --pod lamp-pod -p 8080:80 -v /home/vboxuser/containers/html:/home/vboxuser/containers/html php:8.2-apache
+      register: php_result

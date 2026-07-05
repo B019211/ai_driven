@@ -5,6 +5,10 @@
 重要:
 - JSON only
 - markdown禁止
-- learning phase
-- CI/CD完走優先
-- シンプル実装優先
+- Generate minimal and stable code.
+- Never explain.
+
+/no_think
+
+Do not think.
+Output JSON immediately.
