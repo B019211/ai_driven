@@ -327,26 +327,77 @@ def regenerate_file_with_context(
         encoding="utf-8"
     )
 
+    validation_log = "\n".join(
+        err.get("stdout", "") + "\n" + err.get("stderr", "")
+        for err in context_data["errors"]
+    )
+
+    # AIに分かりやすい修正指示を生成
+    error_summary = []
+
+    for err in context_data["errors"]:
+
+        text = (
+            err.get("stdout", "")
+            + "\n"
+            + err.get("stderr", "")
+        )
+
+        if "Unsupported parameters" in text:
+            error_summary.append(
+                "- Remove unsupported parameters."
+            )
+
+        if "timeout" in text:
+            error_summary.append(
+                "- Delete timeout parameter."
+            )
+
+    error_summary = "\n".join(error_summary)
+
+
     prompt = f"""
-# Architecture
-
-{architecture}
-
-Current file
-
-{current_file}
-
-# System Rules
-
-{rules}
-
-# Output Format
-
-{format_rules}
-
 # Validation Errors
 
 {json.dumps(context_data["errors"], indent=2, ensure_ascii=False)}
+
+The validation result above is produced by the real execution environment.
+
+Every error message is factual.
+
+If the validation says a parameter is unsupported,
+remove or replace that parameter.
+
+If the current file contains a line that caused the validation error,
+you MUST delete or replace that line.
+
+Never keep unsupported parameters.
+
+If validation says
+
+Unsupported parameters for module:
+timeout
+
+the output MUST NOT contain
+
+timeout:
+
+# REQUIRED FIXES
+
+{error_summary}
+
+===== REAL VALIDATION LOG =====
+
+{validation_log}
+
+The validation result above is produced by the real execution environment.
+
+Every error message is factual.
+
+If the validation says a parameter is unsupported,
+remove or replace that parameter.
+
+Never output code that still contains the same validation error.
 
 # stdout
 
@@ -376,13 +427,34 @@ Do NOT regenerate other files.
 Do NOT explain your changes.
 Do NOT use Markdown.
 
-The following error MUST be fixed.
-ERROR:
-ERROR! couldn't resolve module/action 'podman_pod'
-This means the module name is invalid.
-You MUST replace the invalid module with a valid Ansible module.
-Do NOT keep podman_pod.
+The validation log above is the only source of truth.
+Fix every error reported there.
+Do not guess.
+Do not repeat the same validation error.
+Return ONLY the corrected file.
+Before returning,
+verify that every validation error has disappeared.
 
+If any reported invalid parameter still exists,
+your answer is incorrect.
+
+Do not return it.
+    
+Current file
+
+{current_file}
+
+# Architecture
+
+{architecture}
+
+# System Rules
+
+{rules}
+
+# Output Format
+
+{format_rules}
 
 
 """
@@ -425,17 +497,6 @@ Do NOT keep podman_pod.
         raise RuntimeError("Empty response from model")
 
     return strip_markdown_fence(content).strip()
-
-
-
-    if not response.choices[0].message.content:
-        raise RuntimeError(
-            f"Gemini returned empty response for {path}"
-        )
-
-    return strip_markdown_fence(
-        response.choices[0].message.content
-    ).strip()
 
 # =========================================================
 # YAML Repair
@@ -796,9 +857,30 @@ try:
         instance=data,
         schema=OUTPUT_SCHEMA
     )
+
 except ValidationError as e:
-    raise RuntimeError(
-        f"Output schema validation failed:\n{e}"
+
+    print("\nSchema validation failed")
+    print(e)
+
+    regeneration_context = {
+        "source": "schema",
+        "errors": [str(e)]
+    }
+
+    target_file = "all"
+
+    regenerated = regenerate_file_with_context(
+        target_file,
+        architecture,
+        regeneration_context
+    )
+
+    data = safe_json_loads(regenerated)
+
+    validate(
+        instance=data,
+        schema=OUTPUT_SCHEMA
     )
 
 if not isinstance(data, dict):
@@ -1273,6 +1355,8 @@ def run_validation():
                 "stderr": stderr
             })
 
+    print("RETURN ERROR COUNT =", len(validation_errors))
+
     return validation_errors
 
 def validate_known_paths(text):
@@ -1352,6 +1436,48 @@ def validate_cross_file_consistency():
         })
 
     return errors
+
+
+def run_remote_deploy():
+
+    print()
+
+    print("===== DEPLOY =====")
+
+    remote_cmd = (
+
+        f"cd {REMOTE_PROJECT_ROOT} && "
+
+        "ansible-playbook "
+
+        "-i ansible/inventory.ini "
+
+        "ansible/playbook.yml"
+
+    )
+
+    code, stdout, stderr = run_remote_command(
+        ANSIBLE_CONTROL_NODE,
+        remote_cmd
+    )
+
+    stdout = stdout or ""
+    stderr = stderr or ""
+
+    print(stdout)
+
+    if stderr:
+        print(stderr)
+
+    print("Return code =", code)
+
+    return {
+        "success": code == 0,
+        "stdout": stdout,
+        "stderr": stderr
+    }
+
+
 
 # =========================================================
 # Generate Files
@@ -1930,16 +2056,18 @@ if (
     and playbook_file.exists()
 ):
 
-    print(
-        "\nRunning remote ansible syntax check..."
-    )
-
-    remote_cmd = (
+    base_cmd = (
         "which ansible-playbook && "
         "ansible-playbook --version && "
         "ansible-galaxy collection list && "
         f"cd {REMOTE_PROJECT_ROOT} && "
-        "ansible-playbook "
+    )
+
+    print("\nRunning remote ansible syntax check...")
+
+    syntax_cmd = (
+        base_cmd
+        + "ansible-playbook "
         "-i ansible/inventory.ini "
         "ansible/playbook.yml "
         "--syntax-check"
@@ -1947,7 +2075,22 @@ if (
 
     code, stdout, stderr = run_remote_command(
         ANSIBLE_CONTROL_NODE,
-        remote_cmd
+        syntax_cmd
+    )
+
+    print("\nRunning remote ansible check mode...")
+
+    check_cmd = (
+        base_cmd
+        + "ansible-playbook "
+        "-i ansible/inventory.ini "
+        "ansible/playbook.yml "
+        "--check"
+    )
+
+    code, stdout, stderr = run_remote_command(
+        ANSIBLE_CONTROL_NODE,
+        check_cmd
     )
 
     stdout = stdout or ""
@@ -1955,6 +2098,8 @@ if (
 
     print(stdout if stdout else "")
     print(stderr if stderr else "")
+    
+    print("RETURN CODE =", code)
 
     if code != 0:
 
@@ -1984,10 +2129,42 @@ if (
             validation_errors.append({
                 "type": "ansible_syntax",
                 "file": str(playbook_file),
+                "stdout": stdout,
                 "stderr": stderr
             })
 
+        print("ERROR COUNT =", len(validation_errors))
+
+    else:
+
+        check_cmd = (
+            f"cd {REMOTE_PROJECT_ROOT} && "
+            "ansible-playbook "
+            "-i ansible/inventory.ini "
+            "ansible/playbook.yml "
+            "--check"
+        )
+
+        code, stdout, stderr = run_remote_command(
+            ANSIBLE_CONTROL_NODE,
+            check_cmd
+        )
+
+        print("RETURN CODE =", code)
+
+        if code != 0:
+
+            validation_errors.append({
+                "type": "ansible_check",
+                "file": str(playbook_file),
+                "stdout": stdout,
+                "stderr": stderr
+            })
+
+        print("ERROR COUNT =", len(validation_errors))
+
 print("Remote validation finished")
+
 
 # # ---------------------------------------------------------
 
@@ -2048,6 +2225,11 @@ for attempt in range(MAX_VALIDATION_RETRY):
 
     validation_errors = run_validation()
 
+    print("ERROR COUNT =", len(validation_errors))
+
+    for e in validation_errors:
+        print(e["type"])
+
     if not validation_errors:
 
         print(
@@ -2082,11 +2264,16 @@ for attempt in range(MAX_VALIDATION_RETRY):
 
         print(f"[ERROR] {target_file}")
 
+        print("BEFORE REGENERATE")
+
         regenerated = regenerate_file_with_context(
             target_file,
             architecture,
             regeneration_context
         )
+        print("AFTER REGENERATE")
+        print("===== REGENERATED HEAD =====")
+        print(regenerated[:600])
 
         safe_write_file(
             SAFE_ROOT,
@@ -2094,26 +2281,70 @@ for attempt in range(MAX_VALIDATION_RETRY):
             regenerated
         )
 
-        run_command([
+        print("AFTER WRITE")
+        print("===== FILE AFTER WRITE =====")
+        print(
+            (SAFE_ROOT / target_file)
+            .read_text(encoding="utf-8")[:600]
+        )
+
+        code, stdout, stderr = run_command([
             "scp",
             "-r",
             str(SAFE_ROOT),
             f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated"
         ])
 
+        print("AFTER SCP")
+
+        print("SCP RETURN =", code)
+
+        code2, stdout2, stderr2 = run_remote_command(
+            ANSIBLE_CONTROL_NODE,
+            f"sed -n '1,30p' {REMOTE_PROJECT_ROOT}/{target_file}"
+        )
+
+        print("===== REMOTE FILE =====")
+        print(stdout2)
+
+        if stdout:
+            print(stdout)
+
+        if stderr:
+            print(stderr)
+
+# =========================================================
+# Deploy
+# =========================================================
+
+deploy_success = False
+
+if validation_success:
+
+    print("\nValidation passed")
+    print(playbook_file.read_text())
+
+    deploy_result = run_remote_deploy()
+
+    deploy_success = deploy_result["success"]
+
 
 # =========================================================
 # Final
 # =========================================================
 
-if validation_success:
+if validation_success and deploy_success:
 
-    print("\nValidation passed")
     print("\nPipeline completed successfully")
+
+elif not validation_success:
+
+    raise RuntimeError(
+        "Validation retry exhausted"
+    )
 
 else:
 
-    print("\nValidation failed")
     raise RuntimeError(
-        "Validation retry exhausted"
+        "Deploy failed"
     )

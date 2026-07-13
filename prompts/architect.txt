@@ -12,3 +12,30 @@
 
 Do not think.
 Output JSON immediately.
+
+Podman Rules
+
+- Use containers.podman modules.
+- Never use shell for Podman when module exists.
+- podman_pod.state must be started.
+- Do not use state: present.
+- Publish ports only on pod.
+- Publish ports only in podman_pod.publish.
+- Never use ports in podman_container.
+- php:8.2-apache document root is /var/www/html.
+- MySQL container name must be mysql.
+
+Never use unsupported module parameters.
+
+Generate only parameters documented by the installed
+containers.podman collection.
+
+podman_pod.state MUST be started.
+
+Never use
+
+created
+
+present
+
+running
