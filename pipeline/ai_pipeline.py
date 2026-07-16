@@ -456,7 +456,35 @@ Current file
 
 {format_rules}
 
+Priority 1
+Validation Log
 
+Priority 2
+Current File
+
+Priority 3
+Architecture
+
+Priority 4
+Output Rules
+
+================================================
+FINAL INSTRUCTIONS (HIGHEST PRIORITY)
+
+The validation log is the single source of truth.
+
+If the validation reports:
+
+Unsupported parameters:
+timeout
+
+then the returned file MUST NOT contain:
+
+timeout:
+
+Do not keep unsupported parameters under any circumstance.
+
+Return ONLY the corrected file.
 """
 
     print("Calling Ollama...")
@@ -495,6 +523,10 @@ Current file
 
     if content is None:
         raise RuntimeError("Empty response from model")
+
+    print("===== REGENERATED FILE =====")
+    print(content)
+    print("============================")
 
     return strip_markdown_fence(content).strip()
 
@@ -1338,7 +1370,7 @@ def run_validation():
             "ansible-playbook "
             "-i ansible/inventory.ini "
             "ansible/playbook.yml "
-            "--syntax-check"
+            "--check"
         )
 
         code, stdout, stderr = run_remote_command(
@@ -1357,7 +1389,7 @@ def run_validation():
 
     print("RETURN ERROR COUNT =", len(validation_errors))
 
-    return validation_errors
+    return validation_errors, stdout, stderr
 
 def validate_known_paths(text):
 
@@ -2045,125 +2077,134 @@ run_command([
 ])
 
 
-# ---------------------------------------------------------
+# # ---------------------------------------------------------
 
-# Remote Ansible Syntax Check
+# # Remote Ansible Syntax Check
 
-# ---------------------------------------------------------
+# # ---------------------------------------------------------
 
-if (
-    inventory_file.exists()
-    and playbook_file.exists()
-):
+# if (
+#     inventory_file.exists()
+#     and playbook_file.exists()
+# ):
 
-    base_cmd = (
-        "which ansible-playbook && "
-        "ansible-playbook --version && "
-        "ansible-galaxy collection list && "
-        f"cd {REMOTE_PROJECT_ROOT} && "
-    )
+#     base_cmd = (
+#         "which ansible-playbook && "
+#         "ansible-playbook --version && "
+#         "ansible-galaxy collection list && "
+#         f"cd {REMOTE_PROJECT_ROOT} && "
+#     )
 
-    print("\nRunning remote ansible syntax check...")
+#     print("\nRunning remote ansible syntax check...")
 
-    syntax_cmd = (
-        base_cmd
-        + "ansible-playbook "
-        "-i ansible/inventory.ini "
-        "ansible/playbook.yml "
-        "--syntax-check"
-    )
+#     syntax_cmd = (
+#         base_cmd
+#         + "ansible-playbook "
+#         "-i ansible/inventory.ini "
+#         "ansible/playbook.yml "
+#         "--syntax-check"
+#     )
 
-    code, stdout, stderr = run_remote_command(
-        ANSIBLE_CONTROL_NODE,
-        syntax_cmd
-    )
+#     code, stdout, stderr = run_remote_command(
+#         ANSIBLE_CONTROL_NODE,
+#         syntax_cmd
+#     )
 
-    print("\nRunning remote ansible check mode...")
+#     if code != 0:
 
-    check_cmd = (
-        base_cmd
-        + "ansible-playbook "
-        "-i ansible/inventory.ini "
-        "ansible/playbook.yml "
-        "--check"
-    )
+#         validation_errors.append({
+#             "type": "ansible_check",
+#             "file": str(playbook_file),
+#             "stdout": stdout,
+#             "stderr": stderr
+#         })
 
-    code, stdout, stderr = run_remote_command(
-        ANSIBLE_CONTROL_NODE,
-        check_cmd
-    )
+#     print("\nRunning remote ansible check mode...")
 
-    stdout = stdout or ""
-    stderr = stderr or ""
+#     check_cmd = (
+#         base_cmd
+#         + "ansible-playbook "
+#         "-i ansible/inventory.ini "
+#         "ansible/playbook.yml "
+#         "--check"
+#     )
 
-    print(stdout if stdout else "")
-    print(stderr if stderr else "")
+#     code, stdout, stderr = run_remote_command(
+#         ANSIBLE_CONTROL_NODE,
+#         check_cmd
+#     )
+
+#     stdout = stdout or ""
+#     stderr = stderr or ""
+
+#     print(stdout if stdout else "")
+#     print(stderr if stderr else "")
     
-    print("RETURN CODE =", code)
+#     print("RETURN CODE =", code)
 
-    if code != 0:
+#     if code != 0:
 
-        ssh_errors = [
-            "Connection timed out",
-            "Could not resolve hostname",
-            "Connection refused",
-            "No route to host",
-            "Permission denied",
-            "password:"
-        ]
+#         ssh_errors = [
+#             "Connection timed out",
+#             "Could not resolve hostname",
+#             "Connection refused",
+#             "No route to host",
+#             "Permission denied",
+#             "password:"
+#         ]
 
-        if stderr and any(
-            x in stderr
-            for x in ssh_errors
-        ):
+#         if stderr and any(
+#             x in stderr
+#             for x in ssh_errors
+#         ):
 
-            print(
-                "\nSSH connection unavailable"
-            )
+#             print(
+#                 "\nSSH connection unavailable"
+#             )
 
-            print(
-                "Skip remote validation"
-            )
+#             print(
+#                 "Skip remote validation"
+#             )
 
-        else:
-            validation_errors.append({
-                "type": "ansible_syntax",
-                "file": str(playbook_file),
-                "stdout": stdout,
-                "stderr": stderr
-            })
+#         else:
+#             validation_errors.append({
+#                 "type": "ansible_syntax",
+#                 "file": str(playbook_file),
+#                 "stdout": stdout,
+#                 "stderr": stderr
+#             })
 
-        print("ERROR COUNT =", len(validation_errors))
+#         print("ERROR COUNT =", len(validation_errors))
 
-    else:
+#     else:
 
-        check_cmd = (
-            f"cd {REMOTE_PROJECT_ROOT} && "
-            "ansible-playbook "
-            "-i ansible/inventory.ini "
-            "ansible/playbook.yml "
-            "--check"
-        )
+#         check_cmd = (
+#             f"cd {REMOTE_PROJECT_ROOT} && "
+#             "ansible-playbook "
+#             "-i ansible/inventory.ini "
+#             "ansible/playbook.yml "
+#             "--check"
+#         )
 
-        code, stdout, stderr = run_remote_command(
-            ANSIBLE_CONTROL_NODE,
-            check_cmd
-        )
+#         code, stdout, stderr = run_remote_command(
+#             ANSIBLE_CONTROL_NODE,
+#             check_cmd
+#         )
 
-        print("RETURN CODE =", code)
+#         print("RETURN CODE =", code)
 
-        if code != 0:
+#         if code != 0:
 
-            validation_errors.append({
-                "type": "ansible_check",
-                "file": str(playbook_file),
-                "stdout": stdout,
-                "stderr": stderr
-            })
+#             validation_errors.append({
+#                 "type": "ansible_check",
+#                 "file": str(playbook_file),
+#                 "stdout": stdout,
+#                 "stderr": stderr
+#             })
 
-        print("ERROR COUNT =", len(validation_errors))
+#         print("ERROR COUNT =", len(validation_errors))
 
-print("Remote validation finished")
+# print("Remote validation finished")
 
 
 # # ---------------------------------------------------------
@@ -2201,6 +2242,8 @@ print("Remote validation finished")
 # Validation Result
 # ---------------------------------------------------------
 
+validation_errors, stdout, stderr = run_validation()
+
 if validation_errors:
 
     print("\n=== VALIDATION FAILED ===")
@@ -2223,7 +2266,7 @@ for attempt in range(MAX_VALIDATION_RETRY):
         f"\n===== VALIDATION ATTEMPT {attempt + 1} ====="
     )
 
-    validation_errors = run_validation()
+    validation_errors, stdout, stderr = run_validation()
 
     print("ERROR COUNT =", len(validation_errors))
 
@@ -2273,7 +2316,7 @@ for attempt in range(MAX_VALIDATION_RETRY):
         )
         print("AFTER REGENERATE")
         print("===== REGENERATED HEAD =====")
-        print(regenerated[:600])
+        print(regenerated)
 
         safe_write_file(
             SAFE_ROOT,
@@ -2299,6 +2342,8 @@ for attempt in range(MAX_VALIDATION_RETRY):
 
         print("SCP RETURN =", code)
 
+        target_file = target_file.replace("\\", "/")
+        
         code2, stdout2, stderr2 = run_remote_command(
             ANSIBLE_CONTROL_NODE,
             f"sed -n '1,30p' {REMOTE_PROJECT_ROOT}/{target_file}"

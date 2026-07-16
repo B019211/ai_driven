@@ -1,24 +1,31 @@
 ---
-- name: Setup LAMP stack with Podman
+- name: Create Podman pod and containers
   hosts: execution
   tasks:
-    - name: Ensure pod exists
+    - name: Create lamp-pod
       containers.podman.podman_pod:
         name: lamp-pod
         state: started
         publish:
           - "8080:80"
+
     - name: Create PHP container
       containers.podman.podman_container:
         name: php
         image: php:8.2-apache
         state: started
+        pod: lamp-pod
         volumes:
           - /home/vboxuser/containers/html:/var/www/html
-        pod: lamp-pod
+
     - name: Create MySQL container
       containers.podman.podman_container:
         name: mysql
         image: mysql:8.0
         state: started
         pod: lamp-pod
+        env:
+          MYSQL_ROOT_PASSWORD: securepassword
+          MYSQL_DATABASE: testdb
+        volumes:
+          - /home/vboxuser/containers/mysql:/var/lib/mysql

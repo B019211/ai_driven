@@ -39,3 +39,6 @@ created
 present
 
 running
+
+Assume Podman is already installed on the execution node.
+Do not generate tasks that install Podman using dnf, yum, or rpm.
