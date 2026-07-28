@@ -1,0 +1,34 @@
+- name: Create LAMP pod and containers
+  hosts: execution
+  tasks:
+  - name: Create lamp-pod
+    containers.podman.podman_pod:
+      name: lamp-pod
+      state: started
+  - name: Create PHP container
+    containers.podman.podman_container:
+      name: php
+      image: php:8.2-apache
+      pod: lamp-pod
+      env:
+        DOCUMENT_ROOT: /var/www/html
+      volumes:
+      - /home/vboxuser/containers/html:/var/www/html
+  - name: Create MySQL container
+    containers.podman.podman_container:
+      name: mysql
+      image: mysql:8.0
+      pod: lamp-pod
+      env:
+        MYSQL_ROOT_PASSWORD: root
+        MYSQL_DATABASE: testdb
+  - name: Publish ports
+    containers.podman.podman_pod:
+      name: lamp-pod
+      publish:
+      - 80:80
+      - 3306:3306
+  - name: Copy index.php
+    copy:
+      src: '{{ playbook_dir }}/../src/index.php'
+      dest: /home/vboxuser/containers/html/index.php

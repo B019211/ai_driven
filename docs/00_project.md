@@ -1,3 +1,6 @@
+00_project.md
+---
+
 # AI Driven CI/CD
 
 このプロジェクトでは、以下の順で内容を理解してください。
@@ -12,7 +15,13 @@
 
 ## 現在のフェーズ
 
+Current Phase
+
 Learning Phase
+
+Current Target
+
+Root Cause Analysis
 
 ---
 
