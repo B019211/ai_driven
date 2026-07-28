@@ -1,20 +1,60 @@
-# Documents
+# AI Driven CI/CD Pipeline
 
-このディレクトリはAI駆動CI/CDプロジェクトの設計資料を管理します。
+## 概要
 
-## Documents
+本プロジェクトは、AIによる自律的なCI/CDパイプラインの構築を目的としています。
 
-- PROJECT_RULES.md
-  - AIとの開発ルール
+AIが生成した成果物をPythonパイプラインが検証・デプロイし、
+ブラウザ検証やPHP構文チェックなどの実行結果を基に、
+AIがRoot Cause Analysisを行い、
+必要最小限の修復を自動実施することを目標としています。
 
-- ROADMAP.md
-  - 開発計画
+最終目標は
 
-- ARCHITECTURE.md
-  - システム構成
+Generate
+→ Validate
+→ Deploy
+→ Browser Test
+→ Root Cause Analysis
+→ Repair
+→ Retry
 
-- PROMPT_GUIDE.md
-  - プロンプト設計指針
+を完全自動で実現することです。
 
-- LESSONS_LEARNED.md
-  - 開発中に得られた知見
+---
+
+## 主な機能
+
+- AIによるAnsible生成
+- AIによるPHP生成
+- JSON出力
+- Review Loop
+- YAML Validation
+- Remote Validation
+- Browser Validation
+- PHP Lint
+- Root Cause Analysis
+- Auto Repair
+- Auto Retry
+
+---
+
+## ディレクトリ
+
+```
+pipeline/
+context/
+prompts/
+generated/
+logs/
+```
+
+---
+
+## 詳細
+
+AIが読むルールは
+
+PROJECT_RULES.md
+
+を参照してください。

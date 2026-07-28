@@ -1,29 +1,39 @@
-# AI-Driven CI/CD Roadmap
+# ROADMAP
 
-## Phase1 Pipeline
+## Completed
 
-- [x] Generate
-- [x] Review
-- [x] Validation
-- [x] Auto Repair
+? JSON Generation
 
-## Phase2 Deployment
+? Review Loop
 
-- [ ] inventory.ini
-- [ ] Rocky Linux
-- [ ] Apache
-- [ ] Podman
-- [ ] PHP Page
+? YAML Validation
 
-## Phase3 CI/CD
+? Remote Validation
 
-- [ ] Git Push
-- [ ] GitHub Actions
-- [ ] Auto Deploy
+? Browser Validation
 
-## Phase4 Future
+? PHP Lint
 
-- [ ] Docker
-- [ ] Kubernetes
-- [ ] Security Scan
-- [ ] Multi LLM
+---
+
+## In Progress
+
+Root Cause Analysis
+
+Repair Policy
+
+Repair Target Selection
+
+---
+
+## Future
+
+Multi-file Repair
+
+Parallel Validation
+
+Self Improvement
+
+Regression Test
+
+Continuous Learning

@@ -1,23 +1,20 @@
 # AI Output Format
 
-AI must return JSON only.
+Return JSON only.
 
-Required fields
+Required fields:
 
-summary
+- summary
+- files
+- commands
+- risks
 
-files
-
-commands
-
-risks
-
-files is an array.
-
-Each item contains
+Each file entry must contain:
 
 - path
 - content
 
-Do not omit any file.
-Do not generate additional files.
+Rules:
+
+- Do not omit required fields.
+- Do not generate extra files beyond the required set.

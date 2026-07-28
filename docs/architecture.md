@@ -1,47 +1,81 @@
-User
-│
-▼
-Generate
-│
-▼
-Review
-│
-▼
-Validation
-│
-▼
-Repair
-│
-▼
-Git
-│
-▼
-GitHub Actions
-│
-▼
-Ansible
-│
-▼
-Rocky Linux
-│
-▼
-Apache / Podman
-│
-▼
-Browser
+# ARCHITECTURE
+
+## Pipeline
 
 Generate
+
 ↓
-JSON
 
 Review
+
 ↓
-JSON
 
 Validation
+
 ↓
-Error List
+
+Deploy
+
+↓
+
+Browser Validation
+
+↓
+
+PHP Lint
+
+↓
+
+Root Cause Analysis
+
+↓
 
 Repair
+
 ↓
-Regenerated Files
+
+Retry
+
+---
+
+## Components
+
+Generator AI
+
+Reviewer AI
+
+Python Pipeline
+
+Remote Validation
+
+Browser Validation
+
+PHP Lint
+
+Repair Engine
+
+---
+
+## Repair Decision
+
+Reviewer
+
+↓
+
+Diagnosis
+
+↓
+
+Python
+
+↓
+
+Repair Target
+
+↓
+
+Regenerate
+
+↓
+
+Retry

@@ -1,38 +1,35 @@
 # Review Rules
 
-AI generated artifacts must NEVER:
+Review for pipeline viability rather than perfect production hygiene.
 
-- overwrite production files directly
-- disable security permanently
-- expose secrets
-- delete data directories
-- remove firewall rules
-- use force delete unless explicitly approved
+Reject when:
 
-Human approval is required before:
+- the artifact clearly breaks the pipeline
+- secrets or destructive actions are exposed
+- unsupported module parameters are used
+- podman_pod.state is not started
+- podman_container contains ports
+- container environment uses environment instead of env
+- the web container mounts to a path other than /var/www/html
+- the database container name is not mysql
+- shell-based Podman management is used when a containers.podman module exists
+- Reject if the playbook does not deploy src/index.php to /home/vboxuser/containers/html/index.php
 
-- ansible execution
-- deploy
-- git merge
-- container recreation
+Allow temporary, local-learning compromises when the pipeline can still proceed.
 
-Reject playbooks that use
+Playbookに以下が存在しない場合はレビューをRejectすること。
 
-shell: podman
+- Podman Pod作成
+- PHPコンテナ作成
+- MySQLコンテナ作成
+- src/index.php を /home/vboxuser/containers/html/index.php へ配置する copy または同等のタスク
 
-when a containers.podman module exists.
+Never approve a playbook if:
 
-Request regeneration instead.
+Reject if:
 
-Reject playbooks when:
-
-podman_pod.state is not started
-
-podman_container contains ports
-
-php:8.2-apache is mounted somewhere other than /var/www/html
-
-MySQL container name is not mysql
-
-Reject any playbook that uses
-unsupported module parameters.
+- Unsupported Ansible module parameters are used.
+- Unsupported Podman module parameters are introduced.
+- Existing Podman tasks are modified without necessity.
+- Existing validated tasks are rewritten.
+- The review must reject any playbook that invents module parameters.

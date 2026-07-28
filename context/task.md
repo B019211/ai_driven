@@ -1,39 +1,27 @@
 # Task
 
-Current phase
+Current phase: Learning
 
-Learning
+Goal:
 
-Goal
+- Complete the pipeline.
+- Generate the required files.
+- Pass review and validation.
 
-- Complete the CI/CD pipeline.
-- Generate all required files.
-- Pass review.
-- Pass validation.
-
-Required files
+Required files:
 
 - ansible/playbook.yml
 - ansible/inventory.ini
 - src/index.php
 
-Restrictions
+Constraints:
 
-- Do not generate any other files.
-- inventory.ini must contain:
-  - asbsvr
-  - rockey8
+- Generate only these files.
+- inventory.ini must include asbsvr and rockey8.
 
-Priority
+Priority:
 
 1. Pipeline completion
 2. Stable JSON
 3. Valid YAML
 4. Minimal working configuration
-5. Production quality is not required.
-
-Generate exactly these files.
-
-- ansible/playbook.yml
-- ansible/inventory.ini
-- src/index.php

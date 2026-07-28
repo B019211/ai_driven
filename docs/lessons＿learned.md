@@ -1,13 +1,29 @@
-Base64崩壊
+# LESSONS LEARNED
 
-JSON崩壊
+## AIはYAMLを壊すことがある
 
-YAML崩壊
+Pythonで自動補正する。
 
-PathTraversal
+---
 
-Validation改善
+## AIは修正対象を誤る
 
-Gemini503
+Root Cause Analysisを導入する。
 
-Qwenへ移行
+---
+
+## Reviewerは品質保証ではない
+
+Reviewerは診断担当。
+
+---
+
+## Repairは最小単位
+
+全再生成は禁止。
+
+---
+
+## 人間は修正しない
+
+Pipelineが修正する。
