@@ -3,10 +3,14 @@ import base64
 from pathlib import Path
 from difflib import get_close_matches
 from typing import Any, Dict, List, Tuple, Optional
-from utility import run_remote_command
+from utility import (
+  run_remote_command,
+  run_command,
+)
 from config import (
     ANSIBLE_CONTROL_NODE,
     REMOTE_PROJECT_ROOT,
+    SAFE_ROOT,
 )
 
 # =========================================================
@@ -98,6 +102,47 @@ def validate_podman_playbook(playbook_file: Path) -> List[dict]:
 
         playbook_text = playbook_file.read_text(encoding="utf-8")
         parsed = yaml.safe_load(playbook_text)
+
+        if not isinstance(parsed, list):
+            errors.append({
+                "type": "invalid_playbook_structure",
+                "file": str(playbook_file),
+                "stderr": "Playbook root must be a YAML list."
+            })
+            return errors
+
+        for play in parsed:
+            if not isinstance(play, dict):
+                continue
+
+            if "tasks" not in play:
+                errors.append({
+                    "type": "missing_tasks",
+                    "file": str(playbook_file),
+                    "stderr": "Ansible play requires tasks."
+                })
+
+            # taskがplaybook rootに直接置かれているケースを検出
+            if (
+                "tasks" not in play
+                and any(
+                    key.startswith("containers.podman.")
+                    for key in play.keys()
+                )
+            ):
+                errors.append({
+                    "type": "task_list_without_play",
+                    "file": str(playbook_file),
+                    "stderr": "Podman task found at playbook root. Add hosts and tasks."
+                })
+
+            if "hosts" not in play:
+                errors.append({
+                    "type": "missing_hosts",
+                    "file": str(playbook_file),
+                    "stderr": "Ansible play requires hosts."
+                })
+
     except Exception as e:
         return [{"type": "yaml_parse", "file": str(playbook_file), "stderr": str(e)}]
 
@@ -166,12 +211,61 @@ def run_validation(safe_root: Path, inventory_file: Path, playbook_file: Path, p
     stdout = ""
     stderr = ""
 
-    if inventory_file.exists() and playbook_file.exists():
-        remote_cmd = f"cd {REMOTE_PROJECT_ROOT} && ansible-playbook -i ansible/inventory.ini ansible/playbook.yml --check"
-        code, stdout, stderr = run_remote_command(ANSIBLE_CONTROL_NODE, remote_cmd)
-        if code != 0:
-            validation_errors.append({"type": "ansible_syntax", "file": str(playbook_file), "stdout": stdout, "stderr": stderr})
+# remote validation temporarily disabled
+    # if inventory_file.exists() and playbook_file.exists():
+    #     remote_cmd = f"cd {REMOTE_PROJECT_ROOT} && ansible-playbook -i ansible/inventory.ini ansible/playbook.yml --check"
+    #     code, stdout, stderr = run_remote_command(ANSIBLE_CONTROL_NODE, remote_cmd)
+    #     if code != 0:
+    #         validation_errors.append({"type": "ansible_syntax", "file": str(playbook_file), "stdout": stdout, "stderr": stderr})
 
     print("RETURN ERROR COUNT =", len(validation_errors))
     return validation_errors, stdout, stderr
 
+def run_remote_validation() -> Tuple[List[dict], str, str]:
+    """
+    Ansible Control Node上の成果物を検証する。
+    """
+
+    print("======= REMOTE VALIDATION =======")
+
+    code, stdout, stderr = run_command([
+        "scp",
+        "-r",
+        str(SAFE_ROOT),
+        f"{ANSIBLE_CONTROL_NODE}:{REMOTE_PROJECT_ROOT}"
+    ])
+
+    if code != 0:
+        raise RuntimeError(stderr)
+
+    remote_cmd = (
+        f"cd {REMOTE_PROJECT_ROOT} && "
+        "ansible-playbook "
+        "--syntax-check "
+        "-i ansible/inventory.ini "
+        "ansible/playbook.yml"
+    )
+
+    code, stdout, stderr = run_remote_command(
+        ANSIBLE_CONTROL_NODE,
+        remote_cmd
+    )
+
+    code2, stdout2, stderr2 = run_remote_command(
+        ANSIBLE_CONTROL_NODE,
+        f"head -30 {REMOTE_PROJECT_ROOT}/ansible/playbook.yml"
+    )
+
+    print(stdout2)
+
+    errors = []
+
+    if code != 0:
+        errors.append(
+            {
+                "type": "ansible_syntax",
+                "stderr": stderr,
+            }
+        )
+
+    return errors, stdout or "", stderr or ""

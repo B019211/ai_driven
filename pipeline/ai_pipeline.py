@@ -54,12 +54,16 @@ from validation import (
     validate_cross_file_consistency,
     validate_podman_playbook,
     run_validation,
+    run_remote_validation,
 )
 
 from deploy import (
     deploy_pipeline,
+    analyze_deploy_error,
     run_browser_validation,
     run_php_lint,
+    collect_deploy_evidence,
+    analyze_deploy_result,
 )
 
 # =========================================================
@@ -176,20 +180,52 @@ path:
 - explanation禁止
 """
 
+    if path.endswith(".php"):
+        prompt_name = "php_engineer.txt"
+
+    elif path.endswith((".yml", ".yaml", ".ini")):
+        prompt_name = "architect.txt"
+
+    else:
+        prompt_name = "architect.txt"
+
+    system_prompt = (
+        PROJECT_ROOT / f"prompts/{prompt_name}"
+    ).read_text(encoding="utf-8")
+
     response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
-            {"role": "system", "content": (PROJECT_ROOT / "prompts/php_engineer.txt").read_text(encoding="utf-8")},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
         temperature=0.0,
         max_tokens=8192,
+        extra_body={
+            "chat_template_kwargs": {
+                "enable_thinking": False
+            }
+        }
     )
 
-    text = response.choices[0].message.content
+    choice = response.choices[0]
+
+    print(choice)
+
+    text = choice.message.content or getattr(
+        choice.message,
+        "reasoning_content",
+        None
+    )
 
     if not text:
-        raise RuntimeError(f"Empty response for {path}")
+        if choice.finish_reason == "length":
+            raise RuntimeError(
+                "Generation reached max tokens"
+            )
+        raise RuntimeError(
+            f"Model returned empty response. finish_reason={choice.finish_reason}"
+        )
 
     return strip_markdown_fence(text).strip()
 
@@ -198,16 +234,16 @@ def regenerate_file_with_context(path: str, architecture: str, context_data: Dic
     print("=== REGENERATE START ===")
     print(path)
 
-    current_file = (SAFE_ROOT / path).read_text(encoding="utf-8")
+    target = SAFE_ROOT / path
 
-    validation_log = "\n".join(
-        err.get("stdout", "") + "\n" + err.get("stderr", "")
-        for err in context_data["errors"]
-    )
+    if target.exists():
+        current_file = target.read_text(encoding="utf-8")
+    else:
+        current_file = ""
 
     error_summary = []
     for err in context_data["errors"]:
-        text = err.get("stdout", "") + "\n" + err.get("stderr", "")
+        text = json.dumps(err, ensure_ascii=False)
         if "Unsupported parameters" in text:
             error_summary.append("- Remove unsupported parameters.")
         if "timeout" in text:
@@ -218,49 +254,75 @@ def regenerate_file_with_context(path: str, architecture: str, context_data: Dic
 Validation errors:
 {json.dumps(context_data['errors'], indent=2, ensure_ascii=False)}
 
-Required fixes:
+Validation summary:
 {error_summary}
 
-Validation log:
-{validation_log}
-
-Stdout:
+Validation stdout:
 {context_data.get('stdout', '')}
 
-Stderr:
+Validation stderr:
 {context_data.get('stderr', '')}
 
-Target file:
-{path}
+Deployment evidence:
+{json.dumps(context_data.get('evidence', {}), indent=2, ensure_ascii=False)}
+
+Diagnosis:
+{json.dumps(context_data.get('diagnosis', {}), indent=2, ensure_ascii=False)}
 
 Current file:
 {current_file}
+ Edit only this file.
+ Do NOT rewrite the whole architecture.
+ Preserve all unrelated lines.
+ Modify only the minimum lines needed to fix the error.
+ Return the complete corrected file.
 
-Architecture:
-{architecture}
+Return only the complete corrected file content.
 
 Rules:
-{rules}
-
-Output format:
-{format_rules}
-
-Return only the corrected file content.
-Do not return JSON or explanation.
+- Output the entire file.
+- Never output partial content.
+- Never output JSON.
+- Never output markdown fences.
+- Never return JSON.
+- Never return markdown fences.
+- Preserve the original file structure.
+- If the file is YAML, output complete valid YAML.
 """
 
     print("Calling Ollama...")
 
     try:
+
+        if path.endswith(".php"):
+            prompt_name = "php_engineer.txt"
+
+        elif path.endswith((".yml", ".yaml", ".ini")):
+            prompt_name = "architect.txt"
+
+        else:
+            prompt_name = "architect.txt"
+
+        system_prompt = (
+            PROJECT_ROOT / f"prompts/{prompt_name}"
+        ).read_text(encoding="utf-8")
+
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": (PROJECT_ROOT / "prompts/php_engineer.txt").read_text(encoding="utf-8")},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.0,
+            max_tokens=8192,
+            extra_body={
+                "chat_template_kwargs": {
+                    "enable_thinking": False
+                }
+            }
         )
         print("Ollama returned.")
+
     except Exception as e:
         print("OLLAMA ERROR")
         print(e)
@@ -276,8 +338,13 @@ Do not return JSON or explanation.
     print(content)
     print("============================")
 
-    return strip_markdown_fence(content).strip()
+    result = strip_markdown_fence(content).strip()
 
+    print("===== REGENERATE RETURN CHECK =====")
+    print(type(result))
+    print(result[:100])
+
+    return result
 
 def regenerate_file_only(path: str) -> str:
     prompt = f"""
@@ -288,12 +355,21 @@ path:
 - ファイル本文のみ
 - markdown禁止
 - explanation禁止
+- 修正対象以外の変更は禁止。
+- 既存のimage名、container名、port、volume、environment値を変更しない。
+- 不足しているAnsible構造のみ修正する。
 """
 
     response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
+        max_tokens=8192,
+        extra_body={
+            "chat_template_kwargs": {
+                "enable_thinking": False
+            }
+        }
     )
 
     content = response.choices[0].message.content
@@ -364,6 +440,12 @@ Task:
             ],
             temperature=0.0,
             max_tokens=8192,
+            extra_body={
+                "num_predict": 8192,
+                "chat_template_kwargs": {
+                    "enable_thinking": False
+                }
+            }
         )
         print("Ollama returned")
     except Exception as e:
@@ -382,6 +464,11 @@ Task:
     print("finish_reason =", response.choices[0].finish_reason)
     print(response.choices[0])
     print("content =", repr(raw_output))
+
+    print("RAW LENGTH =", len(raw_output or ""))
+    print("===== RAW TAIL =====")
+    print((raw_output or "")[-2000:])
+    print("====================")
 
     if not raw_output:
         if choice.finish_reason == "length":
@@ -411,7 +498,10 @@ Task:
         print("\nSchema validation failed")
         print(e)
 
-        regeneration_context = {"source": "schema", "errors": [str(e)]}
+        regeneration_context = {
+            "source": "schema",
+            "errors": [str(e)],
+        }
         target_file = "all"
 
         regenerated = regenerate_file_with_context(
@@ -462,6 +552,12 @@ Return JSON only.
                 {"role": "user", "content": review_request},
             ],
             temperature=0.0,
+            max_tokens=8192,
+            extra_body={
+                "chat_template_kwargs": {
+                    "enable_thinking": False
+                }
+            }
         )
 
         print(f"Review finished ({time.time() - start:.1f}s)")
@@ -543,6 +639,12 @@ Return JSON only.
                 {"role": "user", "content": fix_prompt},
             ],
             temperature=retry_temp,
+            max_tokens=8192,
+            extra_body={
+                "chat_template_kwargs": {
+                    "enable_thinking": False
+                }
+            }
         )
 
         fix_raw = fix_response.choices[0].message.content
@@ -657,6 +759,12 @@ Error:
                                         {"role": "user", "content": yaml_fix_prompt},
                                     ],
                                     temperature=0.0,
+                                    max_tokens=8192,
+                                    extra_body={
+                                        "chat_template_kwargs": {
+                                            "enable_thinking": False
+                                        }
+                                    }
                                 )
                             except Exception as e:
                                 if "503" in str(e):
@@ -785,19 +893,26 @@ def repair_validation_errors(
     format_rules: str,
     safe_root: Path,
     target_file_override: Optional[str] = None,
+    deploy_evidence: Optional[dict] = None,
+    deploy_diagnosis=None,
 ) -> None:
+
+    # 同一ファイルは1回だけ修正
+    target_files = set()
+
     for err in validation_errors:
         file_value = err.get("file")
         if target_file_override:
-            target_file = target_file_override
+            target_files.add(target_file_override)
         elif file_value:
             try:
-                target_file = str(Path(file_value).resolve().relative_to(safe_root.resolve()))
+                target_files.add(str(Path(file_value).resolve().relative_to(safe_root.resolve())))
             except ValueError:
-                target_file = "ansible/playbook.yml"
+                target_files.add("ansible/playbook.yml")
         else:
-            target_file = "ansible/playbook.yml"
+            target_files.add("ansible/playbook.yml")
 
+    for target_file in target_files:
         print(f"[ERROR] {target_file}")
         print("BEFORE REGENERATE")
 
@@ -806,6 +921,8 @@ def repair_validation_errors(
             "errors": validation_errors,
             "stdout": validation_stdout,
             "stderr": validation_stderr,
+            "evidence": deploy_evidence,
+            "diagnosis": deploy_diagnosis,
         }
 
         regenerated = regenerate_file_with_context(
@@ -815,60 +932,45 @@ def repair_validation_errors(
             rules,
             format_rules,
         )
-        regenerated = extract_file_content_from_response(regenerated)
-        print("AFTER REGENERATE")
-        print("===== REGENERATED HEAD =====")
-        print(regenerated)
+        # regenerated = extract_file_content_from_response(regenerated)
+        print("===== REGENERATE regenerate_file_with_context RETURN CHECK =====")
+        print(type(regenerated))
+        print(repr(regenerated[:100]) if regenerated else regenerated)
+
+        if regenerated is None:
+            raise RuntimeError(
+                f"Regeneration returned None: {target_file}"
+            )
 
         regenerated = repair_podman_yaml_content(regenerated)
+        if regenerated is None:
+            raise RuntimeError(
+                f"Regeneration returned None: {target_file}"
+            )
+
+        print("===== REGENERATE repair_podman_yaml_content RETURN CHECK =====")
+        print(type(regenerated))
+        print(repr(regenerated[:100]) if regenerated else regenerated)
+        
         safe_write_file(safe_root, target_file, regenerated)
         print("AFTER WRITE")
         print("===== FILE AFTER WRITE =====")
         print((safe_root / target_file).read_text(encoding="utf-8")[:600])
 
-        code, stdout, stderr = run_command([
-            "scp",
-            "-r",
-            str(safe_root),
-            f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
-        ])
+        print("Repair completed.")
 
-        print("AFTER SCP")
-        print("SCP RETURN =", code)
+def repair_publish_port(playbook_path):
+    text = Path(playbook_path).read_text(encoding="utf-8")
 
-        remote_target = target_file.replace("\\", "/")
-        code2, stdout2, stderr2 = run_remote_command(
-            ANSIBLE_CONTROL_NODE,
-            f"sed -n '1,30p' {REMOTE_PROJECT_ROOT}/{remote_target}"
-        )
+    text = text.replace(
+        "- 80:80",
+        "- 8080:80"
+    )
 
-        print("===== REMOTE FILE =====")
-        print(stdout2)
-
-        if stdout:
-            print(stdout)
-        if stderr:
-            print(stderr)
-
-        code4, stdout4, stderr4 = run_remote_command(
-            ANSIBLE_CONTROL_NODE,
-            "ls -l /home/vboxuser/containers/html"
-        )
-
-        print("===== HOST HTML DIR =====")
-        print(stdout4)
-
-        code3, stdout3, stderr3 = run_remote_command(
-            ANSIBLE_CONTROL_NODE,
-            "podman exec php sh -c 'head -20 /var/www/html/index.php'"
-        )
-
-        print("===== CONTAINER FILE =====")
-        print(stdout3)
-        if stderr3:
-            print(stderr3)
-
-
+    Path(playbook_path).write_text(
+        text,
+        encoding="utf-8"
+    )
 
 # =========================================================
 # main()
@@ -876,6 +978,8 @@ def repair_validation_errors(
 
 def main() -> None:
     context = load_context()
+    deploy_evidence = {}
+    deploy_diagnosis = {}
 
     data, raw_output = generate_initial_data(context)
 
@@ -929,14 +1033,6 @@ def main() -> None:
     except Exception as e:
         validation_errors.append({"type": "yaml_parse", "file": str(playbook_file), "stderr": str(e)})
 
-    print("Remote validation...")
-    run_command([
-        "scp",
-        "-r",
-        str(SAFE_ROOT),
-        f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
-    ])
-
     validation_errors, stdout, stderr = run_validation(SAFE_ROOT, inventory_file, playbook_file, php_file)
 
     if validation_errors:
@@ -959,6 +1055,7 @@ def main() -> None:
             break
 
         if attempt >= 1:
+            print("Validation repair failed twice. Stop.")
             break
 
         repair_validation_errors(
@@ -971,11 +1068,42 @@ def main() -> None:
             SAFE_ROOT,
         )
 
+    # repair完了後に転送
+    print(playbook_file.read_text())
+    print("===== SCP TO ANSIBLE CONTROL NODE =====")
+    run_command([
+        "scp",
+        "-r",
+        str(SAFE_ROOT),
+        f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
+    ])
+
+    print("===== REMOTE PLAYBOOK CHECK =====")
+    result = run_remote_command(
+        ANSIBLE_CONTROL_NODE,
+        "cat /home/vboxuser/ai_driven/generated/files/ansible/playbook.yml"
+    )
+    if isinstance(result, dict):
+        print(result.get("stdout", ""))
+    else:
+        print(result)
+
+    # asbsvr側確認
+    remote_errors, stdout, stderr = run_remote_validation()
+
+    if remote_errors:
+        print("Remote validation failed")
+        for e in remote_errors:
+            print(e)
+        raise RuntimeError("Remote validation failed")
+
     deploy_success = False
     if validation_success:
         print("\nValidation passed")
         print(playbook_file.read_text())
         deploy_result = deploy_pipeline()
+        deploy_evidence = collect_deploy_evidence()
+        deploy_diagnosis = analyze_deploy_error(deploy_result,deploy_evidence)
         deploy_success = deploy_result["success"]
 
         if deploy_success:
@@ -1000,6 +1128,7 @@ def main() -> None:
                     lint_result,
                     lint_issues,
                     deploy_result,
+                    deploy_diagnosis,
                 )
 
                 if not browser_issues and not lint_issues:
@@ -1007,7 +1136,7 @@ def main() -> None:
 
                 repair_target = "src/index.php"
                 repair_validation_errors(
-                    [{"type": issue["type"], "file": str(playbook_file), "stderr": issue["detail"]} for issue in browser_issues + lint_issues],
+                    [{"type": issue["type"], "file": "ansible/playbook.yml", "stderr": issue["detail"]} for issue in browser_issues + lint_issues],
                     browser_result.get("stdout", "") + "\n" + lint_result.get("stdout", ""),
                     browser_result.get("stderr", "") + "\n" + lint_result.get("stderr", ""),
                     context["architecture"],
@@ -1015,19 +1144,102 @@ def main() -> None:
                     context["format_rules"],
                     SAFE_ROOT,
                     target_file_override=repair_target,
+                    deploy_evidence=deploy_evidence,
+                    deploy_diagnosis=deploy_diagnosis
                 )
 
                 print("\n===== REDEPLOY AFTER REPAIR =====")
                 deploy_result = deploy_pipeline()
+                deploy_evidence = collect_deploy_evidence()
+                deploy_diagnosis = analyze_deploy_error(
+                    deploy_result,
+                    deploy_evidence,
+                )
                 deploy_success = deploy_result["success"]
                 if not deploy_success:
                     break
 
     if validation_success and deploy_success:
         print("\nPipeline completed successfully")
-    elif not validation_success:
-        raise RuntimeError("Validation retry exhausted")
+
     else:
+        print("\n=== DEPLOY FAILED DIAGNOSIS ===")
+        print(json.dumps(
+            deploy_diagnosis,
+            indent=2,
+            ensure_ascii=False
+        ))
+
+        repair_target = deploy_diagnosis.get("repair_target")
+
+        if repair_target:
+            print(f"\n===== DEPLOY AUTO REPAIR ({repair_target}) =====")
+            error_text = (
+                deploy_result.get("stdout", "")
+                + "\n"
+                + deploy_result.get("stderr", "")
+            )
+
+            if "rootlessport cannot expose privileged port 80" in error_text:
+                print("===== REPAIR PUBLISH PORT =====")
+                repair_publish_port(SAFE_ROOT / "ansible/playbook.yml")
+            else:
+                raise RuntimeError(
+                    f"Unknown deploy error.\n{deploy_result['stderr']}"
+                )
+            # repair_validation_errors(
+            #     [{
+            #         "type": deploy_diagnosis.get("root_cause", "deploy_error"),
+            #         "file": repair_target,
+            #         "stderr": deploy_result.get("stderr", "")
+            #     }],
+            #     deploy_result.get("stdout", ""),
+            #     deploy_result.get("stderr", ""),
+            #     context["architecture"],
+            #     context["rules"],
+            #     context["format_rules"],
+            #     SAFE_ROOT,
+            #     target_file_override=repair_target,
+            #     deploy_evidence=deploy_evidence,
+            #     deploy_diagnosis=deploy_diagnosis
+            # )
+
+            print("\n===== SCP TO ANSIBLE CONTROL NODE =====")
+            run_command([
+                "scp",
+                "-r",
+                str(SAFE_ROOT),
+                f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
+            ])
+
+            print("===== REMOTE PLAYBOOK CHECK =====")
+            result = run_remote_command(
+                ANSIBLE_CONTROL_NODE,
+                "cat /home/vboxuser/ai_driven/generated/files/ansible/playbook.yml"
+            )
+            if isinstance(result, dict):
+                print(result.get("stdout", ""))
+            else:
+                print(result)
+
+            # playbookが修正されたので古いPodを破棄
+#            repair_action = deploy_diagnosis.get("repair_action")
+
+#            if repair_action == "recreate_pod":
+            print("\n===== REMOVE OLD POD =====")
+            run_remote_command(
+                EXECUTION_NODE,
+                "podman pod rm -f lamp-pod || true"
+            )
+
+            print("\n===== REDEPLOY AFTER DEPLOY REPAIR =====")
+
+            deploy_result = deploy_pipeline()
+
+            if deploy_result["success"]:
+                print("\nPipeline completed successfully")
+                return
+
         raise RuntimeError("Deploy failed")
 
 

@@ -34,3 +34,12 @@ CATEGORY_TO_TARGET = {
     "configuration": "ansible/inventory.ini",
     "infrastructure": "Dockerfile"
 }
+
+DEPLOY_ERROR_PATTERNS = {
+    "rootlessport cannot expose privileged port": {
+        "category": "deployment",
+        "root_cause": "privileged_port",
+        "reason": "Rootless Podman cannot bind host port 80.",
+        "repair_hint": "Use host port >=1024."
+    }
+}

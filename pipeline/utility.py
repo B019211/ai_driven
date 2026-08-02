@@ -44,7 +44,10 @@ def extract_json(text: Optional[str]) -> str:
     start = min(candidates)
     end = text.rfind("}") if text[start] == "{" else text.rfind("]")
 
-    return text[start:] if end == -1 else text[start : end + 1]
+    if end == -1:
+        raise ValueError("Incomplete JSON response")
+
+    return text[start:end + 1]
 
 
 def sanitize_json_string(text: str) -> str:
@@ -171,7 +174,7 @@ def repair_podman_yaml_content(content: str) -> str:
             for key, value in list(node.items()):
                 if key == "containers.podman.podman_container" and isinstance(value, dict):
                     publish_values = []
-                    for field_name in ("ports", "publish"):
+                    for field_name in ("ports", ):
                         field_value = value.pop(field_name, None)
                         if field_value:
                             if isinstance(field_value, list):
@@ -218,6 +221,9 @@ def repair_podman_yaml_content(content: str) -> str:
 
     collect(parsed)
 
+    print("DEBUG parsed type =", type(parsed))
+    print("DEBUG parsed head =", parsed[:1] if isinstance(parsed, list) else parsed)
+
     for pod_config in pod_configs:
         if pod_publish_ports:
             existing_publish = pod_config.get("publish") or []
@@ -230,7 +236,29 @@ def repair_podman_yaml_content(content: str) -> str:
                     merged_publish.append(port)
             pod_config["publish"] = merged_publish
 
-    return yaml.safe_dump(parsed, sort_keys=False, default_flow_style=False)
+    fixed_yaml = yaml.safe_dump(
+        parsed,
+        sort_keys=False,
+        default_flow_style=False,
+    )
+
+    # publishマージ処理済み
+    # if pod_publish_ports:
+    #     fixed_yaml = yaml.safe_dump(
+    #         parsed,
+    #         sort_keys=False,
+    #         default_flow_style=False
+    #     )
+
+    #     if isinstance(parsed, list) and not fixed_yaml.lstrip().startswith("-"):
+    #         fixed_yaml = "- " + fixed_yaml
+
+    #     return fixed_yaml
+
+    if isinstance(parsed, list) and not fixed_yaml.lstrip().startswith("-"):
+        fixed_yaml = "- " + fixed_yaml
+
+    return fixed_yaml
 
 def plan_repair(
     diagnosis,
@@ -239,6 +267,7 @@ def plan_repair(
     lint_result,
     lint_issues,
     deploy_result,
+    deploy_diagnosis,
 ):
     # Reviewer診断を優先
     category = diagnosis.get("category")

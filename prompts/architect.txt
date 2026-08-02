@@ -24,3 +24,70 @@
 - Podman インストールタスクは作らない。
 - php:8.2-apache の document root は /var/www/html とする。
 - MySQL container name は mysql とする。
+- podman_pod は同一podに対して複数回定義しない。
+- publish は pod 作成時に指定する。
+- podman_pod は同じnameで複数回定義しない。
+- publish は最初のpodman_pod定義に含める。
+
+OUTPUT CONTROL:
+- The response is parsed by a program.
+- Any characters outside JSON will cause failure.
+- Do not output reasoning.
+- Do not output analysis.
+- Return JSON object immediately.
+- The response will be parsed automatically.
+- Any text outside JSON causes failure.
+
+
+## Ansible YAML Rules
+
+When generating ansible yaml files:
+
+- Use hosts: execution
+- Use the existing pod name: lamp-pod
+- Use container names:
+  - php
+  - mysql
+
+Podman modules must use fully qualified collection names.
+
+Allowed:
+- containers.podman.podman_pod
+- containers.podman.podman_container
+
+Forbidden:
+- podman_pod
+- podman_container
+- mypod
+- mycontainer
+
+Never replace existing architecture values.
+
+Ansible repair rules:
+
+When repairing ansible yaml files:
+
+- Preserve existing architecture.
+- Do not change resource names.
+
+Fixed values:
+pod name:
+lamp-pod
+
+container names:
+php
+mysql
+
+Use only fully qualified Podman modules:
+
+Allowed:
+containers.podman.podman_pod
+containers.podman.podman_container
+
+Forbidden:
+podman_pod
+podman_container
+
+Never create alternative names such as:
+mypod
+mycontainer
