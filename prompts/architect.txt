@@ -91,3 +91,20 @@ podman_container
 Never create alternative names such as:
 mypod
 mycontainer
+
+## Mandatory deployment requirements
+
+The generated playbook MUST satisfy all of the following.
+
+- Use Podman.
+- Create pod lamp-pod.
+- Publish host port 8080 to container port 80.
+- Mount
+  /home/vboxuser/containers/html
+  to
+  /var/www/html
+  using :Z.
+- Copy src/index.php to
+  /home/vboxuser/containers/html/index.php.
+- Use inventory group execution.
+- The playbook must be directly executable by ansible-playbook.

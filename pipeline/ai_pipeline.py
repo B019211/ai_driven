@@ -1213,14 +1213,10 @@ def main() -> None:
             ])
 
             print("===== REMOTE PLAYBOOK CHECK =====")
-            result = run_remote_command(
+            print(run_remote_command(
                 ANSIBLE_CONTROL_NODE,
                 "cat /home/vboxuser/ai_driven/generated/files/ansible/playbook.yml"
-            )
-            if isinstance(result, dict):
-                print(result.get("stdout", ""))
-            else:
-                print(result)
+            ))
 
             # playbookが修正されたので古いPodを破棄
 #            repair_action = deploy_diagnosis.get("repair_action")
@@ -1235,6 +1231,29 @@ def main() -> None:
             print("\n===== REDEPLOY AFTER DEPLOY REPAIR =====")
 
             deploy_result = deploy_pipeline()
+
+            print("===== PODMAN STATUS AFTER DEPLOY =====")
+
+            print(run_remote_command(
+                EXECUTION_NODE,
+                "podman ps -a"
+            ))
+
+            print(run_remote_command(
+                EXECUTION_NODE,
+                "podman pod ps"
+            ))
+
+            print(run_remote_command(
+                EXECUTION_NODE,
+                "podman logs php"
+            ))
+
+            print(run_remote_command(
+                EXECUTION_NODE,
+                "podman logs mysql"
+            ))
+
 
             if deploy_result["success"]:
                 print("\nPipeline completed successfully")
