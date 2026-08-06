@@ -1168,8 +1168,13 @@ def main() -> None:
                 if not deploy_success:
                     break
 
-    if validation_success and deploy_success:
-        print("\nPipeline completed successfully")
+    print("validation_success =", validation_success)
+    print("deploy_success =", deploy_success)
+    print(json.dumps(deploy_diagnosis, indent=2))
+
+    if deploy_diagnosis["root_cause"] == "none":
+        print("Pipeline completed successfully")
+        return
 
     else:
         print("\n=== DEPLOY FAILED DIAGNOSIS ===")
@@ -1263,10 +1268,17 @@ def main() -> None:
                 "podman logs mysql"
             ))
 
-
-            if deploy_result["success"]:
-                print("\nPipeline completed successfully")
+            print("validation_success =", validation_success)
+            print("deploy_success =", deploy_success)
+            print(json.dumps(deploy_diagnosis, indent=2))
+            
+            if deploy_diagnosis["root_cause"] == "none":
+                print("Pipeline completed successfully")
                 return
+
+            # if deploy_result["success"]:
+            #     print("\nPipeline completed successfully")
+            #     return
 
         raise RuntimeError("Deploy failed")
 
