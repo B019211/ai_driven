@@ -21,6 +21,7 @@ from config import (
     MAX_RETRY,
     MAX_VALIDATION_RETRY,
     PROJECT_ROOT,
+    TASK_DIR,
     SAFE_ROOT,
     MODEL_NAME,
     PIPELINE_PHASE,
@@ -392,7 +393,7 @@ def load_context() -> Dict[str, Any]:
     format_rules = (PROJECT_ROOT / "context/output_format.md").read_text(encoding="utf-8")
     review_rules = (PROJECT_ROOT / "context/reviewer_rules.md").read_text(encoding="utf-8")
     reviewer_prompt = (PROJECT_ROOT / "prompts/reviewer.txt").read_text(encoding="utf-8")
-    task = (PROJECT_ROOT / "context/task.md").read_text(encoding="utf-8")
+    # task = (PROJECT_ROOT / "context/task.md").read_text(encoding="utf-8")
 
     print("Context loaded")
     return {
@@ -401,11 +402,18 @@ def load_context() -> Dict[str, Any]:
         "format_rules": format_rules,
         "review_rules": review_rules,
         "reviewer_prompt": reviewer_prompt,
-        "task": task,
+        # "task": task,
     }
 
+def load_task(task_name: str) -> str:
+    path = TASK_DIR / task_name
 
-def generate_initial_data(context: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
+    if not path.exists():
+        raise FileNotFoundError(f"Task file not found: {path}")
+
+    return path.read_text(encoding="utf-8")
+
+def generate_initial_data(context: Dict[str, Any],task: str) -> Tuple[Dict[str, Any], str]:
     print("\n===== GENERATE PROMPT =====")
 
     prompt = f"""
@@ -419,7 +427,7 @@ Output Format:
 {context['format_rules']}
 
 Task:
-{context['task']}
+{task}
 """
 
     print(f"Prompt length = {len(prompt):,} chars")
@@ -978,10 +986,11 @@ def repair_publish_port(playbook_path):
 
 def main() -> None:
     context = load_context()
+    infra_task = load_task("infrastructure.md")
     deploy_evidence = {}
     deploy_diagnosis = {}
 
-    data, raw_output = generate_initial_data(context)
+    data, raw_output = generate_initial_data(context,infra_task)
 
     data, review_data = review_loop(data, context)
 

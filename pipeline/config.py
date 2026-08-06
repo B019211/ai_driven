@@ -12,6 +12,7 @@ MAX_RETRY: int = 1
 MAX_VALIDATION_RETRY: int = 2
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
+TASK_DIR = Path("tasks")
 SAFE_ROOT: Path = (PROJECT_ROOT / "generated/files").resolve()
 
 MODEL_NAME: str = "qwen3:8b"

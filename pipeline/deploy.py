@@ -125,7 +125,7 @@ def analyze_deploy_error(
         }
 
     # -------------------------
-    # curl失敗
+    # curl結果確認
     # -------------------------
 
     curl_stderr = evidence.get(
@@ -136,7 +136,7 @@ def analyze_deploy_error(
         ""
     )
 
-    if curl_stderr:
+    if curl_stderr.strip():
 
         return {
             "category": "network",
@@ -148,6 +148,25 @@ def analyze_deploy_error(
                 "pod publish and volume mount."
             ),
             "repair_target": "ansible/playbook.yml",
+        }
+
+    curl_stdout = evidence.get(
+        "curl",
+        {}
+    ).get(
+        "stdout",
+        ""
+    )
+
+    if "PHP Version" in curl_stdout:
+
+        return {
+            "category": "deployment",
+            "root_cause": "none",
+            "reason": "Browser validation succeeded.",
+            "confidence": 0.99,
+            "repair_hint": "",
+            "repair_target": "",
         }
 
     # -------------------------
@@ -270,7 +289,7 @@ def collect_deploy_evidence():
             "podman inspect lamp-pod",
 
         "curl":
-            "curl -i http://localhost:8080"
+            "curl -i -sS http://localhost:8080"
     }
 
     for key, cmd in commands.items():
