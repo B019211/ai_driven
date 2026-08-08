@@ -242,19 +242,6 @@ def repair_podman_yaml_content(content: str) -> str:
         default_flow_style=False,
     )
 
-    # publishマージ処理済み
-    # if pod_publish_ports:
-    #     fixed_yaml = yaml.safe_dump(
-    #         parsed,
-    #         sort_keys=False,
-    #         default_flow_style=False
-    #     )
-
-    #     if isinstance(parsed, list) and not fixed_yaml.lstrip().startswith("-"):
-    #         fixed_yaml = "- " + fixed_yaml
-
-    #     return fixed_yaml
-
     if isinstance(parsed, list) and not fixed_yaml.lstrip().startswith("-"):
         fixed_yaml = "- " + fixed_yaml
 

@@ -30,6 +30,7 @@ from config import (
     REMOTE_PROJECT_ROOT,
     ALLOWED_PATHS,
     CATEGORY_TO_TARGET,
+    TASK_SEQUENCE,
 )
 
 from utility  import (
@@ -289,6 +290,24 @@ Rules:
 - Never return markdown fences.
 - Preserve the original file structure.
 - If the file is YAML, output complete valid YAML.
+
+Additional rules for Podman:
+
+- containers.podman.podman_pod state must be one of:
+  started
+  stopped
+  restarted
+  absent
+  created
+
+- Never use:
+  state: present
+
+- Output must use only valid Ansible module parameters.
+
+- Do not invent unsupported parameters.
+
+- Return the COMPLETE file.
 """
 
     print("Calling Ollama...")
@@ -413,8 +432,10 @@ def load_task(task_name: str) -> str:
 
     return path.read_text(encoding="utf-8")
 
-def generate_initial_data(context: Dict[str, Any],task: str) -> Tuple[Dict[str, Any], str]:
+def generate_initial_data(context: Dict[str, Any], task_name: str, task: str) -> Tuple[Dict[str, Any], str]:
     print("\n===== GENERATE PROMPT =====")
+    task_type = Path(task_name).stem
+    print(f"Task Type = {task_type}")
 
     prompt = f"""
 Architecture:
@@ -425,6 +446,9 @@ Rules:
 
 Output Format:
 {context['format_rules']}
+
+Task Name:
+{task_type}
 
 Task:
 {task}
@@ -892,6 +916,15 @@ def analyze_php_lint_result(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     return issues
 
 
+def run_local_php_lint(php_path: Path) -> Dict[str, Any]:
+    """ローカル環境で `php -l` を実行して構文チェックを行う。"""
+
+    # Use run_command helper to execute local php -l
+    cmd = ["php", "-l", str(php_path)]
+    code, stdout, stderr = run_command(cmd)
+    return {"success": code == 0, "exit_code": code, "stdout": stdout or "", "stderr": stderr or ""}
+
+
 def repair_validation_errors(
     validation_errors: List[dict],
     validation_stdout: str,
@@ -980,17 +1013,31 @@ def repair_publish_port(playbook_path):
         encoding="utf-8"
     )
 
+
+def perform_deploy_cycle() -> Tuple[dict, dict, dict, bool]:
+    """Run deploy_pipeline, collect evidence, analyze error, and return all outputs.
+
+    Returns: (deploy_result, deploy_evidence, deploy_diagnosis, deploy_success)
+    """
+    deploy_result = deploy_pipeline()
+    deploy_evidence = collect_deploy_evidence()
+    deploy_diagnosis = analyze_deploy_error(deploy_result, deploy_evidence)
+    deploy_success = bool(deploy_result.get("success"))
+    return deploy_result, deploy_evidence, deploy_diagnosis, deploy_success
+
 # =========================================================
 # main()
 # =========================================================
 
-def main() -> None:
-    context = load_context()
-    infra_task = load_task("infrastructure.md")
+def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: str) -> None:
     deploy_evidence = {}
     deploy_diagnosis = {}
 
-    data, raw_output = generate_initial_data(context,infra_task)
+    data, raw_output = generate_initial_data(
+        context,
+        task_name,
+        task,
+    )
 
     data, review_data = review_loop(data, context)
 
@@ -1110,63 +1157,54 @@ def main() -> None:
     if validation_success:
         print("\nValidation passed")
         print(playbook_file.read_text())
-        deploy_result = deploy_pipeline()
-        deploy_evidence = collect_deploy_evidence()
-        deploy_diagnosis = analyze_deploy_error(deploy_result,deploy_evidence)
-        deploy_success = deploy_result["success"]
+        deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = perform_deploy_cycle()
 
-        if deploy_success:
-            for repair_attempt in range(2):
-                print(f"\n===== BROWSER VALIDATION (attempt {repair_attempt + 1}) =====")
-                browser_result = run_browser_validation()
-                browser_issues = analyze_browser_validation(browser_result)
-                print(json.dumps(browser_result, indent=2, ensure_ascii=False))
-                print("Browser issues:", json.dumps(browser_issues, ensure_ascii=False))
+    if deploy_success:
+        for repair_attempt in range(2):
+            print(f"\n===== BROWSER VALIDATION (attempt {repair_attempt + 1}) =====")
+            browser_result = run_browser_validation()
+            browser_issues = analyze_browser_validation(browser_result)
+            print(json.dumps(browser_result, indent=2, ensure_ascii=False))
+            print("Browser issues:", json.dumps(browser_issues, ensure_ascii=False))
 
-                print("\n===== PHP LINT =====")
-                lint_result = run_php_lint()
-                lint_issues = analyze_php_lint_result(lint_result)
-                print(json.dumps(lint_result, indent=2, ensure_ascii=False))
-                print("PHP lint issues:", json.dumps(lint_issues, ensure_ascii=False))
+            print("\n===== PHP LINT =====")
+            lint_result = run_php_lint()
+            lint_issues = analyze_php_lint_result(lint_result)
+            print(json.dumps(lint_result, indent=2, ensure_ascii=False))
+            print("PHP lint issues:", json.dumps(lint_issues, ensure_ascii=False))
 
-                diagnosis = review_data.get("diagnosis", {})
-                repair_target = plan_repair(
-                    diagnosis,
-                    browser_result,
-                    browser_issues,
-                    lint_result,
-                    lint_issues,
-                    deploy_result,
-                    deploy_diagnosis,
-                )
+            diagnosis = review_data.get("diagnosis", {})
+            repair_target = plan_repair(
+                diagnosis,
+                browser_result,
+                browser_issues,
+                lint_result,
+                lint_issues,
+                deploy_result,
+                deploy_diagnosis,
+            )
 
-                if not browser_issues and not lint_issues:
-                    break
+            if not browser_issues and not lint_issues:
+                break
 
-                repair_target = "src/index.php"
-                repair_validation_errors(
-                    [{"type": issue["type"], "file": "ansible/playbook.yml", "stderr": issue["detail"]} for issue in browser_issues + lint_issues],
-                    browser_result.get("stdout", "") + "\n" + lint_result.get("stdout", ""),
-                    browser_result.get("stderr", "") + "\n" + lint_result.get("stderr", ""),
-                    context["architecture"],
-                    context["rules"],
-                    context["format_rules"],
-                    SAFE_ROOT,
-                    target_file_override=repair_target,
-                    deploy_evidence=deploy_evidence,
-                    deploy_diagnosis=deploy_diagnosis
-                )
+            repair_target = "src/index.php"
+            repair_validation_errors(
+                [{"type": issue["type"], "file": "ansible/playbook.yml", "stderr": issue["detail"]} for issue in browser_issues + lint_issues],
+                browser_result.get("stdout", "") + "\n" + lint_result.get("stdout", ""),
+                browser_result.get("stderr", "") + "\n" + lint_result.get("stderr", ""),
+                context["architecture"],
+                context["rules"],
+                context["format_rules"],
+                SAFE_ROOT,
+                target_file_override=repair_target,
+                deploy_evidence=deploy_evidence,
+                deploy_diagnosis=deploy_diagnosis
+            )
 
-                print("\n===== REDEPLOY AFTER REPAIR =====")
-                deploy_result = deploy_pipeline()
-                deploy_evidence = collect_deploy_evidence()
-                deploy_diagnosis = analyze_deploy_error(
-                    deploy_result,
-                    deploy_evidence,
-                )
-                deploy_success = deploy_result["success"]
-                if not deploy_success:
-                    break
+            print("\n===== REDEPLOY AFTER REPAIR =====")
+            deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = perform_deploy_cycle()
+            if not deploy_success:
+                break
 
     print("validation_success =", validation_success)
     print("deploy_success =", deploy_success)
@@ -1188,6 +1226,8 @@ def main() -> None:
 
         if repair_target:
             print(f"\n===== DEPLOY AUTO REPAIR ({repair_target}) =====")
+
+            # If the error is privileged port binding, apply quick port fix.
             error_text = (
                 deploy_result.get("stdout", "")
                 + "\n"
@@ -1197,26 +1237,41 @@ def main() -> None:
             if "rootlessport cannot expose privileged port 80" in error_text:
                 print("===== REPAIR PUBLISH PORT =====")
                 repair_publish_port(SAFE_ROOT / "ansible/playbook.yml")
+
             else:
-                raise RuntimeError(
-                    f"Unknown deploy error.\n{deploy_result['stderr']}"
-                )
-            # repair_validation_errors(
-            #     [{
-            #         "type": deploy_diagnosis.get("root_cause", "deploy_error"),
-            #         "file": repair_target,
-            #         "stderr": deploy_result.get("stderr", "")
-            #     }],
-            #     deploy_result.get("stdout", ""),
-            #     deploy_result.get("stderr", ""),
-            #     context["architecture"],
-            #     context["rules"],
-            #     context["format_rules"],
-            #     SAFE_ROOT,
-            #     target_file_override=repair_target,
-            #     deploy_evidence=deploy_evidence,
-            #     deploy_diagnosis=deploy_diagnosis
-            # )
+                # Use deploy_diagnosis to regenerate the indicated repair_target
+                try:
+                    print(f"===== REGENERATE {repair_target} USING AI =====")
+                    regeneration_context = {
+                        "source": "deploy",
+                        "errors": [deploy_diagnosis],
+                        "stdout": deploy_result.get("stdout", ""),
+                        "stderr": deploy_result.get("stderr", ""),
+                        "evidence": deploy_evidence,
+                        "diagnosis": deploy_diagnosis,
+                    }
+
+                    regenerated = regenerate_file_with_context(
+                        repair_target,
+                        context["architecture"],
+                        regeneration_context,
+                        context["rules"],
+                        context["format_rules"],
+                    )
+
+                    if regenerated is None:
+                        raise RuntimeError(f"Regeneration returned None: {repair_target}")
+
+                    if repair_target.endswith((".yml", ".yaml")):
+                        regenerated = repair_podman_yaml_content(regenerated)
+
+                    safe_write_file(SAFE_ROOT, repair_target, regenerated)
+                    print(f"Regenerated file written to SAFE_ROOT: {repair_target}")
+
+                except Exception as e:
+                    print("Auto-repair regeneration failed:", e)
+                    # If regeneration fails, propagate as unknown deploy error
+                    raise RuntimeError(f"Unknown deploy error.\n{deploy_result['stderr']}")
 
             print("\n===== SCP TO ANSIBLE CONTROL NODE =====")
             run_command([
@@ -1233,9 +1288,6 @@ def main() -> None:
             ))
 
             # playbookが修正されたので古いPodを破棄
-#            repair_action = deploy_diagnosis.get("repair_action")
-
-#            if repair_action == "recreate_pod":
             print("\n===== REMOVE OLD POD =====")
             run_remote_command(
                 EXECUTION_NODE,
@@ -1244,7 +1296,7 @@ def main() -> None:
 
             print("\n===== REDEPLOY AFTER DEPLOY REPAIR =====")
 
-            deploy_result = deploy_pipeline()
+            deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = perform_deploy_cycle()
 
             print("===== PODMAN STATUS AFTER DEPLOY =====")
 
@@ -1276,11 +1328,252 @@ def main() -> None:
                 print("Pipeline completed successfully")
                 return
 
-            # if deploy_result["success"]:
-            #     print("\nPipeline completed successfully")
-            #     return
+        # Certain diagnosed root causes should trigger an automatic
+        # repair attempt instead of immediately raising an exception.
+        root = deploy_diagnosis.get("root_cause")
+        auto_repair_root_causes = {
+            "browser_connection_error",
+            "pod_not_running",
+            "apache_not_running",
+            "container_not_running",
+            "playbook_error",
+            "ansible_module_error",
+        }
+
+        if root in auto_repair_root_causes:
+            print(f"\n===== AUTO-REPAIR TRIGGERED FOR: {root} =====")
+
+            # Perform AI-driven repair of the diagnosed target (e.g. playbook)
+            file_to_repair = (
+                deploy_diagnosis.get("repair_target")
+                or "ansible/playbook.yml"
+)
+
+            regeneration_context = {
+                "source": "deploy",
+                "errors": [deploy_diagnosis],
+                "stdout": deploy_result.get("stdout", ""),
+                "stderr": deploy_result.get("stderr", ""),
+                "evidence": deploy_evidence,
+                "diagnosis": deploy_diagnosis,
+            }
+
+            try:
+                print(f"\n===== REGENERATE {file_to_repair} USING AI (auto-repair) =====")
+                regenerated = regenerate_file_with_context(
+                    file_to_repair,
+                    context["architecture"],
+                    regeneration_context,
+                    context["rules"],
+                    context["format_rules"],
+                )
+
+                if regenerated is None:
+                    raise RuntimeError(f"Regeneration returned None: {file_to_repair}")
+
+                if file_to_repair.endswith((".yml", ".yaml")):
+                    regenerated = repair_podman_yaml_content(regenerated)
+
+                safe_write_file(SAFE_ROOT, file_to_repair, regenerated)
+                print("Regenerated file written to SAFE_ROOT:", file_to_repair)
+
+            except Exception as e:
+                raise RuntimeError(
+                    f"Deploy auto repair failed while regenerating "
+                    f"{repair_target}: {e}"
+                ) from e
+                # Fall back to previous behavior (attempt redeploy without regen)
+
+            # Transfer repaired files to control node and redeploy
+            print("\n===== SCP TO ANSIBLE CONTROL NODE (auto-repair) =====")
+            run_command([
+                "scp",
+                "-r",
+                str(SAFE_ROOT),
+                f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
+            ])
+
+            print("===== REMOTE PLAYBOOK CHECK (auto-repair) =====")
+            print(run_remote_command(
+                ANSIBLE_CONTROL_NODE,
+                "cat /home/vboxuser/ai_driven/generated/files/ansible/playbook.yml"
+            ))
+
+            print("\n===== REMOVE OLD POD (auto-repair) =====")
+            run_remote_command(
+                EXECUTION_NODE,
+                "podman pod rm -f lamp-pod || true"
+            )
+
+            print("\n===== REDEPLOY AFTER AUTO-REPAIR =====")
+            deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = perform_deploy_cycle()
+            
+            print("===== AUTO-REPAIR DIAGNOSIS =====")
+            print(json.dumps(deploy_diagnosis, indent=2, ensure_ascii=False))
+
+            if deploy_diagnosis.get("root_cause") == "none":
+                print("Pipeline completed successfully after auto-repair")
+                return
 
         raise RuntimeError("Deploy failed")
+
+def review_application(
+    data: Dict[str, Any],
+) -> Dict[str, Any]:
+
+    print("\n===== APPLICATION REVIEW START =====")
+
+    review_prompt = f"""
+You are a PHP code reviewer.
+
+Review generated application files.
+
+Check:
+- PHP syntax issues
+- Security risks
+- Database handling risks
+- Undefined variables
+- Error handling
+- Code quality
+
+
+Generated Files:
+{json.dumps(data.get("files", []), indent=2, ensure_ascii=False)}
+
+Return JSON:
+
+{{
+    "approved": true/false,
+    "issues": [],
+    "summary": "",
+    "risks": []
+}}
+"""
+
+    response = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {
+                "role": "system",
+                "content": "You are an expert PHP reviewer."
+            },
+            {
+                "role": "user",
+                "content": review_prompt,
+            },
+        ],
+        temperature=0.0,
+    )
+
+    raw = response.choices[0].message.content
+
+    review_result = safe_json_loads(
+        sanitize_json_string(
+            extract_json(raw)
+        )
+    )
+
+    print("\n===== APPLICATION REVIEW RESULT =====")
+    print(json.dumps(
+        review_result,
+        indent=2,
+        ensure_ascii=False
+    ))
+
+    return review_result
+
+def run_application_pipeline(
+    context: Dict[str, Any],
+    task_name: str,
+    task: str,
+) -> None:
+
+    print("\n===== APPLICATION PIPELINE START =====")
+
+    data, raw_output = generate_initial_data(
+        context,
+        task_name,
+        task,
+    )
+
+    print("\n===== APPLICATION REVIEW START =====")
+    review_result = review_application(data,)
+    if not review_result.get("approved", False):
+        print("Application review failed.")
+        return
+    print("\n===== APPLICATION REVIEW END =====")
+
+    print("\n===== APPLICATION GENERATE COMPLETE =====")
+
+    print("Generated files:")
+    for file in data.get("files", []):
+        print("-", file.get("path"))
+
+    # Persist generated files to SAFE_ROOT so we can validate them locally.
+    validation_errors, inventory_file, playbook_file, php_file = generate_files(data)
+
+    print("\n===== PHP VALIDATION (local) =====")
+
+    validation_success = False
+
+    for attempt in range(MAX_VALIDATION_RETRY):
+        print(f"\n===== PHP VALIDATION ATTEMPT {attempt + 1} =====")
+
+        lint_result = run_local_php_lint(php_file)
+        lint_issues = analyze_php_lint_result(lint_result)
+
+        if not lint_issues:
+            print("PHP validation passed")
+            validation_success = True
+            break
+
+        print("PHP lint issues:", json.dumps(lint_issues, ensure_ascii=False))
+
+        # If we've exhausted retries, stop attempting repairs
+        if attempt >= MAX_VALIDATION_RETRY - 1:
+            print("PHP repair failed. Stop.")
+            break
+
+        # Prepare validation context for AI repair
+        validation_stdout = lint_result.get("stdout", "")
+        validation_stderr = lint_result.get("stderr", "")
+
+        validation_errors = [{"type": "php_lint", "file": str(php_file), "stderr": validation_stderr}]
+
+        repair_validation_errors(
+            validation_errors,
+            validation_stdout,
+            validation_stderr,
+            context["architecture"],
+            context["rules"],
+            context["format_rules"],
+            SAFE_ROOT,
+            target_file_override="src/index.php",
+        )
+
+    print("validation_success =", validation_success)
+
+    print("\n===== APPLICATION PIPELINE END =====")
+
+def main() -> None:
+    context = load_context()
+
+    task_handlers = {
+        "infrastructure": run_infrastructure_pipeline,
+        "application": run_application_pipeline,
+    }
+
+    for task_name in TASK_SEQUENCE:
+        task = load_task(task_name)
+        task_type = Path(task_name).stem
+        handler = task_handlers.get(task_type)
+
+        if handler is None:
+            print(f"\n===== SKIP TASK: {task_name} (not implemented) =====")
+            continue
+
+        print(f"\n===== RUN TASK: {task_name} =====")
+        handler(context, task_name, task)
 
 
 if __name__ == "__main__":

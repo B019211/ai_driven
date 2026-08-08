@@ -10,6 +10,7 @@ BLOCKING_SEVERITIES: List[str] = ["BLOCKER"]
 
 MAX_RETRY: int = 1
 MAX_VALIDATION_RETRY: int = 2
+MAX_DEPLOY_RETRY: int = 3
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
 TASK_DIR = Path("tasks")
@@ -44,3 +45,8 @@ DEPLOY_ERROR_PATTERNS = {
         "repair_hint": "Use host port >=1024."
     }
 }
+
+TASK_SEQUENCE = [
+    "infrastructure.md",
+    "application.md",
+]

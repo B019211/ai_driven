@@ -95,3 +95,16 @@ Browser Validation が失敗した場合は、
 
 修正対象を repair_target として決定すること。
 
+Also verify Ansible module correctness.
+
+Reject if:
+
+- invalid module parameters
+- unsupported state values
+- truncated YAML
+- incomplete tasks
+- invalid Podman module usage
+
+If any invalid module parameter exists:
+
+approved = false

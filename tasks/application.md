@@ -1,16 +1,25 @@
-# Application Task
-
-Goal
+# Application Goal
 
 Develop the AI CI/CD Dashboard.
 
-Generate
+# Application Task
 
-- src/index.php
+Create a PHP web application.
+
+Requirements:
+
+- Generate PHP source code.
+- Target file:
+  src/index.php
+- The application should be a simple PHP page.
+- Do not generate infrastructure files.
+- Do not generate Ansible files.
+- Do not generate Podman configuration.
+
+Output should contain application source files only.
 
 Current Stage
-
-Static Dashboard
+　Static Dashboard
 
 Requirements
 
