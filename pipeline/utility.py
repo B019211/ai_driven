@@ -97,6 +97,7 @@ def safe_write_file(root: Path, relative_path: str, content: str) -> None:
     """Path-traversal を防いでファイルを書き込む。"""
 
     resolved = (root / relative_path).resolve()
+    print(f"safe_write_file root={root} relative_path={relative_path} resolved={resolved}")
     if not str(resolved).startswith(str(root.resolve())):
         raise ValueError(f"Path traversal detected: {relative_path}")
 

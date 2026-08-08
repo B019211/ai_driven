@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -90,21 +91,33 @@ class PhpRepairLoopTest(unittest.TestCase):
                 "stderr": functions_result.get("stderr", ""),
             }]
 
-            repair_validation_errors(
-                validation_errors,
-                functions_result.get("stdout", ""),
-                functions_result.get("stderr", ""),
-                architecture="",
-                rules="",
-                format_rules="",
-                safe_root=SAFE_ROOT,
-            )
+            with patch("pipeline.ai_pipeline.regenerate_file_with_context") as mock_regen:
+                def fake_regen(path, architecture, context_data, rules, format_rules):
+                    self.assertEqual(path, "src/functions.php")
+                    self.assertEqual(context_data["errors"][0]["file"], str(functions_path))
+                    return "<?php function foo() { echo 'hi'; }"
+
+                mock_regen.side_effect = fake_regen
+
+                repair_validation_errors(
+                    validation_errors,
+                    functions_result.get("stdout", ""),
+                    functions_result.get("stderr", ""),
+                    architecture="",
+                    rules="",
+                    format_rules="",
+                    safe_root=SAFE_ROOT,
+                )
+
+                mock_regen.assert_called_once()
 
             post_index_result = run_local_php_lint(index_path)
             post_functions_result = run_local_php_lint(functions_path)
 
             self.assertEqual(post_index_result.get("exit_code"), 0, "index.php should still pass after repair")
             self.assertEqual(post_functions_result.get("exit_code"), 0, "functions.php should pass after repair")
+            self.assertTrue(functions_path.exists(), "functions.php should exist after repair")
+            self.assertEqual(functions_path.read_text(encoding="utf-8"), "<?php function foo() { echo 'hi'; }")
             print("Multiple PHP repair loop succeeded")
 
         finally:

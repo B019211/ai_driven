@@ -266,6 +266,9 @@ Validation stdout:
 Validation stderr:
 {context_data.get('stderr', '')}
 
+Available PHP files:
+{json.dumps(context_data.get('available_php_files', []), indent=2, ensure_ascii=False)}
+
 Deployment evidence:
 {json.dumps(context_data.get('evidence', {}), indent=2, ensure_ascii=False)}
 
@@ -1024,6 +1027,8 @@ def validate_php_cross_files(
                 errors.append({
                     "type": "php_include",
                     "file": str(php_path.relative_to(safe_root_resolved)).replace("\\", "/"),
+                    "include_type": include["type"],
+                    "expression": expression,
                     "reference": expression,
                     "message": "Referenced path is outside SAFE_ROOT and is not allowed",
                 })
@@ -1033,6 +1038,8 @@ def validate_php_cross_files(
                 errors.append({
                     "type": "php_include",
                     "file": str(php_path.relative_to(safe_root_resolved)).replace("\\", "/"),
+                    "include_type": include["type"],
+                    "expression": expression,
                     "reference": str(resolved.relative_to(safe_root_resolved)).replace("\\", "/"),
                     "message": "Referenced PHP file does not exist",
                 })
@@ -1058,6 +1065,7 @@ def repair_validation_errors(
     format_rules: str,
     safe_root: Path,
     target_file_override: Optional[str] = None,
+    available_php_files: Optional[List[str]] = None,
     deploy_evidence: Optional[dict] = None,
     deploy_diagnosis=None,
 ) -> None:
@@ -1068,10 +1076,20 @@ def repair_validation_errors(
     for err in validation_errors:
         file_value = err.get("file")
         if target_file_override:
-            target_files.add(target_file_override)
+            override_path = Path(target_file_override)
+            if override_path.is_absolute():
+                try:
+                    target_files.add(str(override_path.relative_to(safe_root.resolve())).replace("\\", "/"))
+                except ValueError:
+                    target_files.add(str(override_path))
+            else:
+                target_files.add(target_file_override.replace("\\", "/"))
         elif file_value:
+            resolved_file = Path(file_value)
+            if not resolved_file.is_absolute():
+                resolved_file = (safe_root / file_value).resolve()
             try:
-                target_files.add(str(Path(file_value).resolve().relative_to(safe_root.resolve())))
+                target_files.add(str(resolved_file.relative_to(safe_root.resolve())).replace("\\", "/"))
             except ValueError:
                 target_files.add("ansible/playbook.yml")
         else:
@@ -1086,6 +1104,7 @@ def repair_validation_errors(
             "errors": validation_errors,
             "stdout": validation_stdout,
             "stderr": validation_stderr,
+            "available_php_files": available_php_files or [],
             "evidence": deploy_evidence,
             "diagnosis": deploy_diagnosis,
         }
@@ -1650,6 +1669,10 @@ def run_application_pipeline(
     for attempt in range(MAX_VALIDATION_RETRY):
         print(f"\n===== PHP VALIDATION ATTEMPT {attempt + 1} =====")
 
+        php_files = discover_php_files(SAFE_ROOT)
+        if not php_files and php_file.exists():
+            php_files = [php_file]
+
         validation_errors = []
         for php_path in php_files:
             lint_result = run_local_php_lint(php_path)
@@ -1659,7 +1682,7 @@ def run_application_pipeline(
                 print(f"PHP lint issues for {php_path}:", json.dumps(lint_issues, ensure_ascii=False))
                 validation_errors.append({
                     "type": "php_lint",
-                    "file": str(php_path),
+                    "file": str(php_path.relative_to(SAFE_ROOT)).replace("\\", "/"),
                     "stdout": lint_result.get("stdout", ""),
                     "stderr": lint_result.get("stderr", ""),
                 })
@@ -1673,8 +1696,23 @@ def run_application_pipeline(
                 print("Cross-file validation failed")
                 for err in cross_file_errors:
                     print(json.dumps(err, ensure_ascii=False))
-                validation_success = False
-                return
+
+                if attempt >= MAX_VALIDATION_RETRY - 1:
+                    print("Cross-file repair failed. Stop.")
+                    break
+
+                available_files = [str(p.relative_to(SAFE_ROOT)).replace("\\", "/") for p in php_files]
+                repair_validation_errors(
+                    cross_file_errors,
+                    "",
+                    "",
+                    context["architecture"],
+                    context["rules"],
+                    context["format_rules"],
+                    SAFE_ROOT,
+                    available_php_files=available_files,
+                )
+                continue
 
             print("PHP validation passed")
             validation_success = True

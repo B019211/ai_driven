@@ -22,3 +22,4 @@
     <p>This is a static dashboard page implemented in pure PHP 8.2</p>
 </body>
 </html>
+<?php syntax error
