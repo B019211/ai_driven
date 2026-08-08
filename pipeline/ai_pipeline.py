@@ -936,6 +936,110 @@ def analyze_php_lint_result(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     return issues
 
 
+def collect_php_includes(path: Path) -> List[dict]:
+    """Collect static PHP include/require expressions from a PHP file."""
+    text = path.read_text(encoding="utf-8")
+    includes: List[dict] = []
+
+    pattern = re.compile(
+        r"\b(require|require_once|include|include_once)\b\s*(?:\(\s*)?(?P<expr>[^;]+?)(?:\s*\))?\s*;",
+        re.IGNORECASE,
+    )
+
+    for match in pattern.finditer(text):
+        include_type = match.group(1).lower()
+        expression = match.group("expr").strip()
+        include_entry = {
+            "type": include_type,
+            "expression": expression,
+        }
+
+        parsed_path = parse_php_include_expression(expression)
+        if parsed_path is not None:
+            include_entry["path"] = parsed_path
+
+        includes.append(include_entry)
+
+    return includes
+
+
+def parse_php_include_expression(expression: str) -> Optional[str]:
+    """静的に解釈できる PHP include/require のパスを抽出する。"""
+    expr = expression.strip()
+
+    simple_match = re.fullmatch(r"['\"](?P<path>[^'\"]+)['\"]", expr)
+    if simple_match:
+        return simple_match.group("path")
+
+    dir_match = re.fullmatch(
+        r"__DIR__\s*\.\s*['\"](?P<path>[^'\"]+)['\"]",
+        expr,
+    )
+    if dir_match:
+        path = dir_match.group("path")
+        return path.lstrip("/")
+
+    return None
+
+
+def resolve_php_include_path(
+    php_path: Path,
+    include_expr: str,
+    safe_root: Path,
+) -> Optional[Path]:
+    """Resolve a static PHP include path relative to SAFE_ROOT, or return None if unsupported."""
+    referenced_path = parse_php_include_expression(include_expr)
+    if referenced_path is None:
+        return None
+
+    if not referenced_path.endswith(".php"):
+        return None
+
+    candidate = Path(referenced_path)
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        resolved = (php_path.parent / referenced_path).resolve()
+
+    return resolved
+
+
+def validate_php_cross_files(
+    php_files: List[Path],
+    safe_root: Path,
+) -> List[dict]:
+    """Validate PHP include/require cross-file references under SAFE_ROOT."""
+    errors: List[dict] = []
+    safe_root_resolved = safe_root.resolve()
+
+    for php_path in php_files:
+        includes = collect_php_includes(php_path)
+        for include in includes:
+            expression = include["expression"]
+            resolved = resolve_php_include_path(php_path, expression, safe_root)
+            if resolved is None:
+                continue
+
+            if not resolved.is_relative_to(safe_root_resolved):
+                errors.append({
+                    "type": "php_include",
+                    "file": str(php_path.relative_to(safe_root_resolved)).replace("\\", "/"),
+                    "reference": expression,
+                    "message": "Referenced path is outside SAFE_ROOT and is not allowed",
+                })
+                continue
+
+            if not resolved.exists():
+                errors.append({
+                    "type": "php_include",
+                    "file": str(php_path.relative_to(safe_root_resolved)).replace("\\", "/"),
+                    "reference": str(resolved.relative_to(safe_root_resolved)).replace("\\", "/"),
+                    "message": "Referenced PHP file does not exist",
+                })
+
+    return errors
+
+
 def run_local_php_lint(php_path: Path) -> Dict[str, Any]:
     """ローカル環境で `php -l` を実行して構文チェックを行う。"""
 
@@ -1563,6 +1667,15 @@ def run_application_pipeline(
                 print(f"PHP validation passed for {php_path}")
 
         if not validation_errors:
+            cross_file_errors = validate_php_cross_files(php_files, SAFE_ROOT)
+            if cross_file_errors:
+                print("PHP validation passed")
+                print("Cross-file validation failed")
+                for err in cross_file_errors:
+                    print(json.dumps(err, ensure_ascii=False))
+                validation_success = False
+                return
+
             print("PHP validation passed")
             validation_success = True
             break
