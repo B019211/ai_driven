@@ -57,6 +57,66 @@ class PhpRepairLoopTest(unittest.TestCase):
                 php_path.write_text(backup_path.read_text(encoding="utf-8"), encoding="utf-8")
                 backup_path.unlink()
 
+    def test_multiple_php_repair_loop_with_single_failure(self) -> None:
+        index_path = SAFE_ROOT / "src/index.php"
+        functions_path = SAFE_ROOT / "src/functions.php"
+
+        if not index_path.exists():
+            self.skipTest(f"PHP file not found: {index_path}")
+
+        index_backup = Path(tempfile.gettempdir()) / f"src_index_php_backup_{uuid4().hex}.php"
+        functions_backup = Path(tempfile.gettempdir()) / f"src_functions_php_backup_{uuid4().hex}.php"
+        original_index = index_path.read_text(encoding="utf-8")
+        original_functions = functions_path.read_text(encoding="utf-8") if functions_path.exists() else None
+
+        try:
+            shutil.copy2(index_path, index_backup)
+            if functions_path.exists():
+                shutil.copy2(functions_path, functions_backup)
+
+            index_path.write_text("<?php echo 'ok';\n", encoding="utf-8")
+            functions_path.write_text("<?php function foo() { echo 'hi'\n", encoding="utf-8")
+
+            index_result = run_local_php_lint(index_path)
+            self.assertEqual(index_result.get("exit_code"), 0, "Expected index.php to pass lint")
+
+            functions_result = run_local_php_lint(functions_path)
+            self.assertNotEqual(functions_result.get("exit_code"), 0, "Expected functions.php to fail lint")
+
+            validation_errors = [{
+                "type": "php_lint",
+                "file": str(functions_path),
+                "stdout": functions_result.get("stdout", ""),
+                "stderr": functions_result.get("stderr", ""),
+            }]
+
+            repair_validation_errors(
+                validation_errors,
+                functions_result.get("stdout", ""),
+                functions_result.get("stderr", ""),
+                architecture="",
+                rules="",
+                format_rules="",
+                safe_root=SAFE_ROOT,
+            )
+
+            post_index_result = run_local_php_lint(index_path)
+            post_functions_result = run_local_php_lint(functions_path)
+
+            self.assertEqual(post_index_result.get("exit_code"), 0, "index.php should still pass after repair")
+            self.assertEqual(post_functions_result.get("exit_code"), 0, "functions.php should pass after repair")
+            print("Multiple PHP repair loop succeeded")
+
+        finally:
+            if index_backup.exists():
+                index_path.write_text(index_backup.read_text(encoding="utf-8"), encoding="utf-8")
+                index_backup.unlink()
+            if functions_backup.exists():
+                functions_path.write_text(functions_backup.read_text(encoding="utf-8"), encoding="utf-8")
+                functions_backup.unlink()
+            elif functions_path.exists() and original_functions is None:
+                functions_path.unlink()
+
 
 if __name__ == "__main__":
     unittest.main()

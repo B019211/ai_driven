@@ -30,6 +30,13 @@ ALLOWED_PATHS = {
     "src/index.php",
 }
 
+APPLICATION_ALLOWED_PATHS = {
+    "src/index.php",
+    "src/config.php",
+    "src/functions.php",
+    "src/db.php",
+}
+
 CATEGORY_TO_TARGET = {
     "application": "src/index.php",
     "deployment": "ansible/playbook.yml",

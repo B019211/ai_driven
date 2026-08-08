@@ -9,7 +9,7 @@ import time
 import subprocess
 
 from difflib import get_close_matches
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional, Set
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -29,6 +29,7 @@ from config import (
     EXECUTION_NODE,
     REMOTE_PROJECT_ROOT,
     ALLOWED_PATHS,
+    APPLICATION_ALLOWED_PATHS,
     CATEGORY_TO_TARGET,
     TASK_SEQUENCE,
 )
@@ -714,8 +715,11 @@ Return JSON only.
 # Generate Files
 # =========================================================
 
-def generate_files(data: Dict[str, Any]) -> Tuple[List[dict], Path, Path, Path]:
+def generate_files(data: Dict[str, Any], allowed_paths: Optional[Set[str]] = None) -> Tuple[List[dict], Path, Path, Path]:
     validation_errors: List[dict] = []
+
+    if allowed_paths is None:
+        allowed_paths = ALLOWED_PATHS
 
     import shutil
 
@@ -756,7 +760,7 @@ def generate_files(data: Dict[str, Any]) -> Tuple[List[dict], Path, Path, Path]:
             if not content.strip():
                 raise ValueError(f"Empty content file: {relative_path}")
 
-            if relative_path not in ALLOWED_PATHS:
+            if relative_path not in allowed_paths:
                 raise ValueError(f"Forbidden path: {relative_path}")
 
             if relative_path.endswith((".yml", ".yaml")):
@@ -873,6 +877,15 @@ def postprocess_regenerated_file_content(content: str, target_file: str) -> str:
     if target_file.endswith((".yml", ".yaml")):
         return repair_podman_yaml_content(content)
     return content
+
+
+def discover_php_files(root: Path) -> List[Path]:
+    """Discover generated PHP files under SAFE_ROOT/src."""
+    php_dir = root / "src"
+    if not php_dir.exists():
+        return []
+
+    return sorted([p for p in php_dir.glob("*.php") if p.is_file()])
 
 
 def analyze_browser_validation(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1517,7 +1530,14 @@ def run_application_pipeline(
         print("-", file.get("path"))
 
     # Persist generated files to SAFE_ROOT so we can validate them locally.
-    validation_errors, inventory_file, playbook_file, php_file = generate_files(data)
+    validation_errors, inventory_file, playbook_file, php_file = generate_files(
+        data,
+        allowed_paths=ALLOWED_PATHS | APPLICATION_ALLOWED_PATHS,
+    )
+
+    php_files = discover_php_files(SAFE_ROOT)
+    if not php_files and php_file.exists():
+        php_files = [php_file]
 
     print("\n===== PHP VALIDATION (local) =====")
 
@@ -1526,36 +1546,40 @@ def run_application_pipeline(
     for attempt in range(MAX_VALIDATION_RETRY):
         print(f"\n===== PHP VALIDATION ATTEMPT {attempt + 1} =====")
 
-        lint_result = run_local_php_lint(php_file)
-        lint_issues = analyze_php_lint_result(lint_result)
+        validation_errors = []
+        for php_path in php_files:
+            lint_result = run_local_php_lint(php_path)
+            lint_issues = analyze_php_lint_result(lint_result)
 
-        if not lint_issues:
+            if lint_issues:
+                print(f"PHP lint issues for {php_path}:", json.dumps(lint_issues, ensure_ascii=False))
+                validation_errors.append({
+                    "type": "php_lint",
+                    "file": str(php_path),
+                    "stdout": lint_result.get("stdout", ""),
+                    "stderr": lint_result.get("stderr", ""),
+                })
+            else:
+                print(f"PHP validation passed for {php_path}")
+
+        if not validation_errors:
             print("PHP validation passed")
             validation_success = True
             break
 
-        print("PHP lint issues:", json.dumps(lint_issues, ensure_ascii=False))
-
-        # If we've exhausted retries, stop attempting repairs
         if attempt >= MAX_VALIDATION_RETRY - 1:
             print("PHP repair failed. Stop.")
             break
 
-        # Prepare validation context for AI repair
-        validation_stdout = lint_result.get("stdout", "")
-        validation_stderr = lint_result.get("stderr", "")
-
-        validation_errors = [{"type": "php_lint", "file": str(php_file), "stderr": validation_stderr}]
-
+        # Repair only failed PHP files
         repair_validation_errors(
             validation_errors,
-            validation_stdout,
-            validation_stderr,
+            "\n".join(err.get("stdout", "") for err in validation_errors),
+            "\n".join(err.get("stderr", "") for err in validation_errors),
             context["architecture"],
             context["rules"],
             context["format_rules"],
             SAFE_ROOT,
-            target_file_override="src/index.php",
         )
 
     print("validation_success =", validation_success)
