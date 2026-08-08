@@ -868,6 +868,13 @@ def extract_file_content_from_response(content: str) -> str:
     return strip_markdown_fence(content).strip()
 
 
+def postprocess_regenerated_file_content(content: str, target_file: str) -> str:
+    """Apply extension-specific repair to regenerated file content."""
+    if target_file.endswith((".yml", ".yaml")):
+        return repair_podman_yaml_content(content)
+    return content
+
+
 def analyze_browser_validation(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Browser Validation の結果を解析して問題を返す。"""
 
@@ -983,13 +990,13 @@ def repair_validation_errors(
                 f"Regeneration returned None: {target_file}"
             )
 
-        regenerated = repair_podman_yaml_content(regenerated)
+        regenerated = postprocess_regenerated_file_content(regenerated, target_file)
         if regenerated is None:
             raise RuntimeError(
                 f"Regeneration returned None: {target_file}"
             )
 
-        print("===== REGENERATE repair_podman_yaml_content RETURN CHECK =====")
+        print("===== REGENERATE postprocess_regenerated_file_content RETURN CHECK =====")
         print(type(regenerated))
         print(repr(regenerated[:100]) if regenerated else regenerated)
         
