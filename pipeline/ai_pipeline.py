@@ -1377,7 +1377,10 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
             ensure_ascii=False
         ))
 
-        repair_target = deploy_diagnosis.get("repair_target")
+        if deploy_diagnosis is not None:
+            repair_target = deploy_diagnosis.get("repair_target")
+        else:
+            repair_target = None
 
         if repair_target:
             print(f"\n===== DEPLOY AUTO REPAIR ({repair_target}) =====")
@@ -1502,7 +1505,7 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
             file_to_repair = (
                 deploy_diagnosis.get("repair_target")
                 or "ansible/playbook.yml"
-)
+            )
 
             regeneration_context = {
                 "source": "deploy",
