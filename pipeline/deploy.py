@@ -84,6 +84,69 @@ def analyze_deploy_error(
         "stdout",
         ""
     )
+
+    # -------------------------
+    # 既存ロジック
+    # -------------------------
+
+    stderr = result.get("stderr") or ""
+    stderr_lower = stderr.lower()
+
+    if (
+        "rootlessport cannot expose privileged port 80"
+        in stderr_lower
+    ):
+        return {
+            "category": "environment",
+            "root_cause": "rootless_privileged_port",
+            "reason": stderr,
+            "confidence": 0.99,
+            "repair_hint": "Use port >=1024.",
+            "repair_target": "ansible/playbook.yml",
+        }
+
+    if "unsupported parameters" in stderr_lower:
+        return {
+            "category": "ansible",
+            "root_cause": "unsupported_module_parameter",
+            "reason": stderr,
+            "confidence": 0.99,
+            "repair_hint": (
+                "Remove unsupported module parameters "
+                "from playbook.yml."
+            ),
+            "repair_target": "ansible/playbook.yml",
+        }
+
+    if "missing required arguments" in stderr_lower:
+        return {
+            "category": "ansible",
+            "root_cause": "missing_required_argument",
+            "reason": stderr,
+            "confidence": 0.99,
+            "repair_hint": (
+                "Add required module arguments."
+            ),
+            "repair_target": "ansible/playbook.yml",
+        }
+
+    for pattern, diagnosis in DEPLOY_ERROR_PATTERNS.items():
+        if pattern.lower() in stderr_lower:
+            return diagnosis.copy()
+
+    if result.get("returncode", 0) != 0:
+        return {
+            "category": "deployment",
+            "root_cause": "ansible_playbook_failed",
+            "reason": stderr,
+            "confidence": 0.8,
+            "repair_hint": (
+                "Check ansible/playbook.yml and "
+                "podman logs for details."
+            ),
+            "repair_target": "ansible/playbook.yml",
+        }
+
     # -------------------------
     # phpコンテナ存在チェック
     # -------------------------
@@ -168,47 +231,6 @@ def analyze_deploy_error(
             "repair_hint": "",
             "repair_target": "",
         }
-
-    # -------------------------
-    # 既存ロジック
-    # -------------------------
-
-    stderr = (
-        result.get("stderr") or ""
-    ).lower()
-
-
-    if (
-        "rootlessport cannot expose privileged port 80"
-        in stderr
-    ):
-        return {
-            "category": "environment",
-            "root_cause": "rootless_privileged_port",
-            "reason": (
-                "Rootless Podman cannot bind privileged port 80."
-            ),
-            "confidence": 0.99,
-            "repair_hint": (
-                "Use port >=1024."
-            ),
-            "repair_target": "ansible/playbook.yml",
-        }
-
-
-    for pattern, diagnosis in DEPLOY_ERROR_PATTERNS.items():
-
-        if pattern.lower() in stderr:
-            return diagnosis.copy()
-
-    return {
-        "category": "deployment",
-        "root_cause": "unknown",
-        "reason": stderr,
-        "confidence": 0.3,
-        "repair_hint": "Review deployment log.",
-        "repair_target": "ansible/playbook.yml",
-    }
 
 def run_browser_validation() -> Dict[str, Any]:
     """デプロイ後のブラウザ検証を実行する。"""

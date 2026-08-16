@@ -228,10 +228,12 @@ def run_remote_validation() -> Tuple[List[dict], str, str]:
 
     print("======= REMOTE VALIDATION =======")
 
+    source = str(SAFE_ROOT) + "/."
+    
     code, stdout, stderr = run_command([
         "scp",
         "-r",
-        str(SAFE_ROOT),
+        source,
         f"{ANSIBLE_CONTROL_NODE}:{REMOTE_PROJECT_ROOT}"
     ])
 

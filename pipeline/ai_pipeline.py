@@ -442,6 +442,24 @@ def generate_initial_data(context: Dict[str, Any], task_name: str, task: str) ->
     print(f"Task Type = {task_type}")
 
     prompt = f"""
+
+Role:
+You are an AI software architect responsible for generating the files required by the specified task.
+
+Task Type:
+{task_type}
+
+Task:
+{task}
+
+Task Scope Rules:
+- The Task above defines the scope of the requested deliverable.
+- Generate only files explicitly required by the Task.
+- Do not generate files belonging to another task type.
+- Do not infer additional infrastructure or application components that are not required by the Task.
+- When the Task explicitly prohibits a technology or file type, that prohibition takes precedence.
+- The Architecture and Rules below provide project-wide constraints, but they must not expand the scope of the current Task.
+    
 Architecture:
 {context['architecture']}
 
@@ -450,12 +468,6 @@ Rules:
 
 Output Format:
 {context['format_rules']}
-
-Task Name:
-{task_type}
-
-Task:
-{task}
 """
 
     print(f"Prompt length = {len(prompt):,} chars")
@@ -1353,7 +1365,7 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
     print("deploy_success =", deploy_success)
     print(json.dumps(deploy_diagnosis, indent=2))
 
-    if deploy_diagnosis["root_cause"] == "none":
+    if deploy_diagnosis and deploy_diagnosis["root_cause"] == "none":
         print("Pipeline completed successfully")
         return
 
@@ -1467,7 +1479,7 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
             print("deploy_success =", deploy_success)
             print(json.dumps(deploy_diagnosis, indent=2))
             
-            if deploy_diagnosis["root_cause"] == "none":
+            if deploy_diagnosis and deploy_diagnosis["root_cause"] == "none":
                 print("Pipeline completed successfully")
                 return
 
@@ -1562,23 +1574,54 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
 
 def review_application(
     data: Dict[str, Any],
+    task_name: str,
+    task: str,
+    rules: str,
 ) -> Dict[str, Any]:
 
     print("\n===== APPLICATION REVIEW START =====")
 
     review_prompt = f"""
-You are a PHP code reviewer.
+Role:
+You are an application reviewer for an AI-driven CI/CD pipeline.
 
-Review generated application files.
+Task Name:
+{task_name}
 
-Check:
-- PHP syntax issues
-- Security risks
-- Database handling risks
-- Undefined variables
-- Error handling
-- Code quality
+Task:
+{task}
 
+Project Rules:
+{rules}
+
+Review the generated files against the Task and Project Rules.
+
+Review priority:
+
+1. Scope compliance
+   - Generate only files required by the Task.
+   - Reject files that belong to infrastructure when the Task prohibits infrastructure files.
+   - Reject Ansible or Podman files when the Task prohibits them.
+   - Reject database-related files or configuration when the Task prohibits MySQL.
+
+2. Requirement compliance
+   - Verify that required files are present.
+   - Verify that the generated files satisfy the explicit requirements in the Task.
+
+3. PHP correctness
+   - PHP syntax issues
+   - Undefined variables
+   - Basic error handling issues
+
+4. Security
+   - Security risks relevant to the generated application.
+
+5. Code quality
+   - Only identify issues that materially affect the requested application.
+
+Do not reject a generated file based only on generic best practices when that issue is outside the scope of the current Task.
+
+Do not invent requirements that are not present in the Task or Project Rules.
 
 Generated Files:
 {json.dumps(data.get("files", []), indent=2, ensure_ascii=False)}
@@ -1640,7 +1683,7 @@ def run_application_pipeline(
     )
 
     print("\n===== APPLICATION REVIEW START =====")
-    review_result = review_application(data,)
+    review_result = review_application(data, task_name, task, context.get("rules", ""))
     if not review_result.get("approved", False):
         print("Application review failed.")
         return
@@ -1734,6 +1777,72 @@ def run_application_pipeline(
         )
 
     print("validation_success =", validation_success)
+
+    # =========================================================
+    # Deploy（Infrastructure の既存機構を再利用）
+    # - SAFE_ROOT を Ansible Control Node に転送
+    # - リモート検証（syntax-check）を行い、問題なければ deploy を実行
+    # - デプロイ後に Browser Validation / PHP Lint を実行
+    # Minimal change: re-use existing infra functions and commands.
+    print("\n===== APPLICATION PIPELINE DEPLOY SEQUENCE START =====")
+
+    if validation_success:
+        print("===== SCP TO ANSIBLE CONTROL NODE =====")
+        run_command([
+            "scp",
+            "-r",
+            str(SAFE_ROOT),
+            f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
+        ])
+
+        print("===== REMOTE PLAYBOOK CHECK =====")
+        try:
+            remote_cat = run_remote_command(
+                ANSIBLE_CONTROL_NODE,
+                "cat /home/vboxuser/ai_driven/generated/files/ansible/playbook.yml",
+            )
+            print(remote_cat if isinstance(remote_cat, str) else remote_cat)
+        except Exception as e:
+            print("Remote playbook check failed:", e)
+
+        print("===== REMOTE VALIDATION =====")
+        try:
+            remote_errors, rv_stdout, rv_stderr = run_remote_validation()
+            if remote_errors:
+                print("Remote validation reported errors:")
+                for e in remote_errors:
+                    print(e)
+        except Exception as e:
+            print("Remote validation failed:", e)
+
+        print("===== PERFORM DEPLOY CYCLE =====")
+        try:
+            deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = perform_deploy_cycle()
+            print("deploy_success =", deploy_success)
+            print(json.dumps(deploy_diagnosis, indent=2, ensure_ascii=False))
+        except Exception as e:
+            print("Deploy failed:", e)
+            deploy_result = {}
+            deploy_evidence = {}
+            deploy_diagnosis = {}
+            deploy_success = False
+
+        print("\n===== BROWSER VALIDATION (application pipeline) =====")
+        try:
+            browser_result = run_browser_validation()
+            print(json.dumps(browser_result, indent=2, ensure_ascii=False))
+        except Exception as e:
+            print("Browser validation failed:", e)
+
+        print("\n===== PHP LINT (application pipeline) =====")
+        try:
+            lint_result = run_php_lint()
+            print(json.dumps(lint_result, indent=2, ensure_ascii=False))
+        except Exception as e:
+            print("PHP lint (remote) failed:", e)
+
+    else:
+        print("Skipping deploy: PHP validation did not succeed.")
 
     print("\n===== APPLICATION PIPELINE END =====")
 
