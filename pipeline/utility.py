@@ -92,10 +92,29 @@ def decode_b64(content: str) -> str:
     except (binascii.Error, UnicodeDecodeError) as e:
         raise ValueError(f"Invalid base64 content: {e}")
 
+def normalize_generated_path(path: str) -> str:
+    path = path.replace("\\", "/").strip()
+
+    prefix = "generated/files/"
+
+    while path.startswith(prefix):
+        path = path[len(prefix):]
+
+    allowed = {
+        "ansible/playbook.yml",
+        "ansible/inventory.ini",
+        "src/index.php",
+    }
+
+    if path not in allowed:
+        raise ValueError(f"Forbidden normalized path: {path}")
+
+    return path
 
 def safe_write_file(root: Path, relative_path: str, content: str) -> None:
     """Path-traversal を防いでファイルを書き込む。"""
 
+    relative_path = normalize_generated_path(relative_path)
     resolved = (root / relative_path).resolve()
     print(f"safe_write_file root={root} relative_path={relative_path} resolved={resolved}")
     if not str(resolved).startswith(str(root.resolve())):
@@ -161,8 +180,10 @@ def repair_podman_yaml_content(content: str) -> str:
         import yaml
 
         parsed = yaml.safe_load(content)
-    except Exception:
-        return content
+    except Exception as e:
+        print("=== PODMAN YAML REPAIR SKIPPED: INVALID YAML ===")
+        print(e)
+        raise ValueError(f"Invalid YAML before Podman repair: {e}") from e
 
     if not isinstance(parsed, (list, dict)):
         return content
@@ -257,19 +278,33 @@ def plan_repair(
     deploy_result,
     deploy_diagnosis,
 ):
-    # Reviewer診断を優先
-    category = diagnosis.get("category")
+    # 1. Browser issues からの repair_target 判定（RCA結果を最優先）
+    for issue in browser_issues:
+        target = issue.get("repair_target")
+        if target:
+            return target
+        category = issue.get("category")
+        if category and category in CATEGORY_TO_TARGET:
+            return CATEGORY_TO_TARGET[category]
 
-    target = CATEGORY_TO_TARGET.get(category)
-
-    if target is not None:
-        return target
-
-    # AIが判断できなかった場合だけPythonが補完
-    if browser_issues:
-        return "ansible/playbook.yml"
-
+    # 2. PHP lint issues は application (src/index.php)
     if lint_issues:
         return "src/index.php"
 
-    return None
+    # 3. deploy_diagnosis からの判定
+    if deploy_diagnosis:
+        target = deploy_diagnosis.get("repair_target")
+        if target:
+            return target
+        category = deploy_diagnosis.get("category")
+        if category and category in CATEGORY_TO_TARGET:
+            return CATEGORY_TO_TARGET[category]
+
+    # 4. Reviewer診断をフォールバック
+    if diagnosis:
+        category = diagnosis.get("category")
+        target = CATEGORY_TO_TARGET.get(category)
+        if target is not None:
+            return target
+
+    return "src/index.php"

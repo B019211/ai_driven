@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Tuple, Optional
+import time
 from config import DEPLOY_ERROR_PATTERNS
 
 from utility import (
@@ -232,35 +233,148 @@ def analyze_deploy_error(
             "repair_target": "",
         }
 
+def check_pod_state() -> dict:
+    """Deploy後のPod/Container状態を確認する。"""
+
+    print("\n===== POD STATE CHECK =====")
+
+    pod_result = run_remote_command(
+        EXECUTION_NODE,
+        "podman pod ps --filter name=lamp-pod"
+    )
+
+    container_result = run_remote_command(
+        EXECUTION_NODE,
+        "podman ps -a --filter name=php --filter name=mysql"
+    )
+
+    pod_output = (
+        pod_result.get("stdout", "")
+        if isinstance(pod_result, dict)
+        else str(pod_result)
+    )
+
+    container_output = (
+        container_result.get("stdout", "")
+        if isinstance(container_result, dict)
+        else str(container_result)
+    )
+
+    print(pod_output)
+    print(container_output)
+
+    pod_running = False
+    php_running = False
+    mysql_running = False
+
+    for line in pod_output.splitlines():
+        if "lamp-pod" in line and "Running" in line:
+            pod_running = True
+            break
+
+    for line in container_output.splitlines():
+        if "php" in line and "Up" in line:
+            php_running = True
+
+        if "mysql" in line and "Up" in line:
+            mysql_running = True
+
+    return {
+        "pod_running": pod_running,
+        "php_running": php_running,
+        "mysql_running": mysql_running,
+        "pod_stdout": pod_output,
+        "container_stdout": container_output,
+    }
+
+
 def run_browser_validation() -> Dict[str, Any]:
     """デプロイ後のブラウザ検証を実行する。"""
 
     url = "http://192.168.122.10:8080"
-    code, stdout, stderr = run_command(["curl", "-sS", "-D", "-", url])
-    stdout = stdout or ""
-    stderr = stderr or ""
+
+    max_attempts = 10
+    retry_interval = 2
+
+    code = 0
+    stdout = ""
+    stderr = ""
+
+    for attempt in range(1, max_attempts + 1):
+        print(
+            f"Browser validation request "
+            f"(attempt {attempt}/{max_attempts})"
+        )
+
+        pod_state = check_pod_state()
+
+        if not pod_state.get("php_running", False):
+            print(
+                "PHP container is not running. "
+                "Waiting before HTTP validation..."
+            )
+            time.sleep(2)
+            continue
+
+        code, stdout, stderr = run_command(
+            ["curl", "-sS", "-D", "-", url]
+        )
+
+        stdout = stdout or ""
+        stderr = stderr or ""
+
+        if code == 0:
+            break
+
+        if attempt < max_attempts:
+            print(
+                "HTTP service is not ready. "
+                f"Retrying in {retry_interval} seconds..."
+            )
+            time.sleep(retry_interval)
 
     headers_text = stdout
     body_text = ""
+
     for separator in ("\r\n\r\n", "\n\n"):
         if separator in stdout:
             headers_text, body_text = stdout.split(separator, 1)
             break
 
-    header_lines = [line for line in headers_text.splitlines() if line]
+    header_lines = [
+        line for line in headers_text.splitlines()
+        if line
+    ]
+
     status_line = header_lines[0] if header_lines else ""
+
     status_code = 200
+
     if status_line.startswith("HTTP/"):
         status_code = int(status_line.split()[1])
 
     headers: Dict[str, str] = {}
+
     for line in header_lines[1:]:
         if ":" in line:
             name, value = line.split(":", 1)
             headers[name.strip()] = value.strip()
 
+    if code != 0:
+        success = False
+    elif status_code >= 400:
+        success = False
+    elif "connection failed" in body_text.lower():
+        success = False
+    elif "fatal error" in body_text.lower():
+        success = False
+    elif "parse error" in body_text.lower():
+        success = False
+    else:
+        success = True
+
     return {
-        "success": code == 0,
+        "success": success,
         "status": status_code,
         "body": body_text,
         "headers": headers,
@@ -270,22 +384,23 @@ def run_browser_validation() -> Dict[str, Any]:
 
 
 def run_php_lint() -> Dict[str, Any]:
-    """対象 PHP ファイルの構文チェックを実行する。"""
+    """デプロイされたPHPファイルの構文チェックを実行する。"""
 
-    remote_cmds = [
-        "php -l /var/www/html/index.php",
-        "podman run --rm -v /home/vboxuser/containers/html:/var/www/html php:8.2-apache php -l /var/www/html/index.php",
-    ]
+    remote_cmd = (
+        "podman exec php php -l /var/www/html/index.php"
+    )
 
-    for remote_cmd in remote_cmds:
-        code, stdout, stderr = run_remote_command(EXECUTION_NODE, remote_cmd)
-        if code == 0:
-            return {"success": True, "exit_code": code, "stdout": stdout or "", "stderr": stderr or ""}
-        if "command not found" not in (stderr or "").lower() and "not found" not in (stderr or "").lower():
-            return {"success": False, "exit_code": code, "stdout": stdout or "", "stderr": stderr or ""}
+    code, stdout, stderr = run_remote_command(
+        EXECUTION_NODE,
+        remote_cmd,
+    )
 
-    return {"success": False, "exit_code": 127, "stdout": "", "stderr": "php command not found"}
-
+    return {
+        "success": code == 0,
+        "exit_code": code,
+        "stdout": stdout or "",
+        "stderr": stderr or "",
+    }
 
 def collect_deploy_evidence():
 

@@ -40,6 +40,7 @@ from utility  import (
     safe_json_loads,
     encode_b64,
     decode_b64,
+    normalize_generated_path,
     safe_write_file,
     log_text,
     run_command,
@@ -62,6 +63,7 @@ from validation import (
 
 from deploy import (
     deploy_pipeline,
+    check_pod_state,
     analyze_deploy_error,
     run_browser_validation,
     run_php_lint,
@@ -83,7 +85,7 @@ load_dotenv()
 client = OpenAI(
     base_url="http://localhost:11434/v1",
     api_key="ollama",
-    timeout=900,
+    timeout=1800,
 )
 
 
@@ -233,7 +235,7 @@ path:
     return strip_markdown_fence(text).strip()
 
 
-def regenerate_file_with_context(path: str, architecture: str, context_data: Dict[str, Any], rules: str, format_rules: str) -> str:
+def regenerate_file_with_context(path: str, architecture: str, context_data: Dict[str, Any], rules: str, task_rules: str, format_rules: str) -> str:
     print("=== REGENERATE START ===")
     print(path)
 
@@ -254,6 +256,24 @@ def regenerate_file_with_context(path: str, architecture: str, context_data: Dic
     error_summary = "\n".join(error_summary)
 
     prompt = f"""
+Role:
+You are repairing an existing Infrastructure artifact in an AI-driven CI/CD pipeline.
+
+Task:
+Repair only the target file using the actual validation/deployment evidence.
+
+Project Architecture:
+{architecture}
+
+Project Rules:
+{rules}
+
+Task Rules:
+{task_rules}
+
+Output Format Rules:
+{format_rules}
+
 Validation errors:
 {json.dumps(context_data['errors'], indent=2, ensure_ascii=False)}
 
@@ -277,41 +297,51 @@ Diagnosis:
 
 Current file:
 {current_file}
- Edit only this file.
- Do NOT rewrite the whole architecture.
- Preserve all unrelated lines.
- Modify only the minimum lines needed to fix the error.
- Return the complete corrected file.
+
+Repair rules:
+- Edit only this file.
+- Fix only the reported error.
+- Preserve every valid existing line.
+- Preserve task order unless required by the error.
+- Do not redesign the infrastructure.
+- Do not change unrelated images, containers, ports, paths, volumes, hosts, or environment values.
+- Do not invent parameters.
+- Do not replace fixed Infrastructure Rules with generic Ansible conventions.
+- The Project Rules and Infrastructure Rules above take precedence over general best practices.
+- When a fixed value is specified by the rules, preserve that exact value.
+- Return the complete corrected file.
+
+For ansible/playbook.yml:
+- The YAML root must be a list.
+- hosts must be execution.
+- Use containers.podman.podman_pod.
+- Use containers.podman.podman_container.
+- Pod name must remain lamp-pod.
+- Container names must remain php and mysql.
+- Pod publish must remain 8080:80.
+- Do not add container ports.
+- Use env, not environment.
+- The PHP image must remain php:8.2-apache.
+- The MySQL image must remain mysql:8.0.
+- The PHP volume must remain:
+  /home/vboxuser/containers/html:/var/www/html:Z
+- The index.php copy source must remain:
+  "{{ playbook_dir }}/../src/index.php"
+- The index.php copy destination must remain:
+  /home/vboxuser/containers/html/index.php
+- Do not specify owner or group for the index.php copy task.
+- If mode is specified, it must be "0644".
+- The PHP startup command must use:
+  command:
+    - sh
+    - -c
+    - "docker-php-ext-install pdo_mysql && apache2-foreground"
+- Do not modify src/index.php to solve infrastructure deployment errors.
 
 Return only the complete corrected file content.
-
-Rules:
-- Output the entire file.
-- Never output partial content.
-- Never output JSON.
-- Never output markdown fences.
-- Never return JSON.
-- Never return markdown fences.
-- Preserve the original file structure.
-- If the file is YAML, output complete valid YAML.
-
-Additional rules for Podman:
-
-- containers.podman.podman_pod state must be one of:
-  started
-  stopped
-  restarted
-  absent
-  created
-
-- Never use:
-  state: present
-
-- Output must use only valid Ansible module parameters.
-
-- Do not invent unsupported parameters.
-
-- Return the COMPLETE file.
+Never return JSON.
+Never return markdown fences.
+Never return explanation.
 """
 
     print("Calling Ollama...")
@@ -338,7 +368,7 @@ Additional rules for Podman:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.0,
-            max_tokens=8192,
+            max_tokens=4096,
             extra_body={
                 "chat_template_kwargs": {
                     "enable_thinking": False
@@ -352,11 +382,22 @@ Additional rules for Podman:
         print(e)
         raise
 
-    content = response.choices[0].message.content
+    choice = response.choices[0]
+    content = choice.message.content
+
     print("=== REGENERATE END ===")
 
-    if content is None:
-        raise RuntimeError("Empty response from model")
+    if not content:
+        if choice.finish_reason == "length":
+            raise RuntimeError(
+                "Model response exceeded max_tokens "
+                f"({choice.finish_reason})"
+            )
+
+        raise RuntimeError(
+            "Empty response from model "
+            f"finish_reason={choice.finish_reason}"
+        )
 
     print("===== REGENERATED FILE =====")
     print(content)
@@ -367,6 +408,11 @@ Additional rules for Podman:
     print("===== REGENERATE RETURN CHECK =====")
     print(type(result))
     print(result[:100])
+
+    if not result:
+        raise RuntimeError(
+            "Regenerated file content is empty after processing."
+        )
 
     return result
 
@@ -408,24 +454,59 @@ path:
 # Generate
 # =========================================================
 
-def load_context() -> Dict[str, Any]:
-    print("\n===== LOAD CONTEXT =====")
+def load_context(
+    task_type: str,
+    previous_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    print(f"\n===== LOAD CONTEXT: {task_type} =====")
 
     architecture = (PROJECT_ROOT / "context/architecture.md").read_text(encoding="utf-8")
     rules = (PROJECT_ROOT / "context/system_rules.md").read_text(encoding="utf-8")
     format_rules = (PROJECT_ROOT / "context/output_format.md").read_text(encoding="utf-8")
     review_rules = (PROJECT_ROOT / "context/reviewer_rules.md").read_text(encoding="utf-8")
     reviewer_prompt = (PROJECT_ROOT / "prompts/reviewer.txt").read_text(encoding="utf-8")
-    # task = (PROJECT_ROOT / "context/task.md").read_text(encoding="utf-8")
+
+    if task_type == "infrastructure":
+        task_rules = (PROJECT_ROOT / "context/infra_rules.md").read_text(encoding="utf-8")
+        task_review_rules = (
+            PROJECT_ROOT / "context/infra_reviewer_rules.md"
+        ).read_text(encoding="utf-8")
+
+    elif task_type == "application":
+        task_rules = (PROJECT_ROOT / "context/app_rules.md").read_text(encoding="utf-8")
+        task_review_rules = (
+            PROJECT_ROOT / "context/app_reviewer_rules.md"
+        ).read_text(encoding="utf-8")
+
+    else:
+        raise ValueError(f"Unsupported task type: {task_type}")
+
+    deployment_contract = {
+        "web_url": "http://192.168.122.10:8080",
+        "db_host": "mysql",
+        "db_port": 3306,
+        "db_name": "testdb",
+        "db_user": "root",
+        "db_password": "secret",
+    }
+
+    if previous_context:
+        deployment_contract.update(
+            previous_context.get("deployment_contract", {})
+        )
 
     print("Context loaded")
+
     return {
+        "task_type": task_type,
         "architecture": architecture,
         "rules": rules,
         "format_rules": format_rules,
         "review_rules": review_rules,
+        "task_rules": task_rules,
+        "task_review_rules": task_review_rules,
         "reviewer_prompt": reviewer_prompt,
-        # "task": task,
+        "deployment_contract": deployment_contract,
     }
 
 def load_task(task_name: str) -> str:
@@ -441,33 +522,84 @@ def generate_initial_data(context: Dict[str, Any], task_name: str, task: str) ->
     task_type = Path(task_name).stem
     print(f"Task Type = {task_type}")
 
+#     prompt = f"""
+
+# Role:
+# You are an AI software architect responsible for generating the files required by the specified task.
+
+# Task Type:
+# {task_type}
+
+# Task:
+# {task}
+
+# Task Scope Rules:
+# - The Task above defines the scope of the requested deliverable.
+# - Generate only files explicitly required by the Task.
+# - Do not generate files belonging to another task type.
+# - Do not infer additional infrastructure or application components that are not required by the Task.
+# - When the Task explicitly prohibits a technology or file type, that prohibition takes precedence.
+# - The Architecture and Rules below provide project-wide constraints, but they must not expand the scope of the current Task.
+    
+# Architecture:
+# {context['architecture']}
+
+# Rules:
+# {context['rules']}
+
+# Task Rules:
+# {context['task_rules']}
+
+# Deployment Contract:
+# {json.dumps(context.get("deployment_contract", {}), indent=2, ensure_ascii=False)}
+
+# Output Format:
+# {context['format_rules']}
+# """
+
     prompt = f"""
-
 Role:
-You are an AI software architect responsible for generating the files required by the specified task.
-
-Task Type:
-{task_type}
+You are an AI software architect.
 
 Task:
 {task}
 
-Task Scope Rules:
-- The Task above defines the scope of the requested deliverable.
-- Generate only files explicitly required by the Task.
-- Do not generate files belonging to another task type.
-- Do not infer additional infrastructure or application components that are not required by the Task.
-- When the Task explicitly prohibits a technology or file type, that prohibition takes precedence.
-- The Architecture and Rules below provide project-wide constraints, but they must not expand the scope of the current Task.
-    
-Architecture:
-{context['architecture']}
-
 Rules:
-{context['rules']}
+- Follow the Task exactly.
+- Generate only files required by the Task.
+- Do not add files, technologies, or features not required by the Task.
+- Do not guess missing requirements.
+- Keep the implementation minimal.
+- Follow the Task Rules below.
+
+Task Rules:
+{context['task_rules']}
+
+Deployment Contract:
+{json.dumps(context.get("deployment_contract", {}), indent=2, ensure_ascii=False)}
 
 Output Format:
 {context['format_rules']}
+
+JSON STRING RULES:
+- The "content" field contains source code and MUST be a valid JSON string.
+- Escape every backslash in source code according to JSON syntax.
+- For example, PHP source containing \PDO MUST be represented as \\PDO inside the JSON string.
+- Do not produce invalid JSON escape sequences such as \P.
+- The complete response MUST be accepted by Python json.loads().
+
+Output:
+Return JSON only.
+The JSON must contain:
+- summary
+- files: [{{
+    "path": "...",
+    "content": "..."
+  }}]
+- commands
+- risks
+
+Return only the JSON object.
 """
 
     print(f"Prompt length = {len(prompt):,} chars")
@@ -484,7 +616,7 @@ Output Format:
             model=MODEL_NAME,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": "/no_think\n\n" + prompt,},
             ],
             temperature=0.0,
             max_tokens=8192,
@@ -526,9 +658,12 @@ Output Format:
         raise RuntimeError("Model returned empty response.")
 
     json_text = extract_json(raw_output)
-    json_text = sanitize_json_string(json_text)
-
-    data = safe_json_loads(json_text)
+    try:
+        data = json.loads(json_text)
+    except json.JSONDecodeError:
+        print("Initial JSON parse failed. Attempting JSON repair.")
+        json_text = sanitize_json_string(json_text)
+        data = safe_json_loads(json_text)
 
     required_defaults = {
         "commands": [],
@@ -546,21 +681,60 @@ Output Format:
         print("\nSchema validation failed")
         print(e)
 
-        regeneration_context = {
-            "source": "schema",
-            "errors": [str(e)],
-        }
-        target_file = "all"
+        repair_prompt = f"""
+The generated response is valid JSON but does not satisfy OUTPUT_SCHEMA.
 
-        regenerated = regenerate_file_with_context(
-            target_file,
-            context["architecture"],
-            regeneration_context,
-            context["rules"],
-            context["format_rules"],
+Validation error:
+{str(e)}
+
+Current generated JSON:
+{json.dumps(data, ensure_ascii=False, indent=2)}
+
+Task:
+{task}
+
+Task Rules:
+{context['task_rules']}
+
+Deployment Contract:
+{json.dumps(context.get("deployment_contract", {}), indent=2, ensure_ascii=False)}
+
+Output Format:
+{context['format_rules']}
+
+Repair only the JSON structure required to satisfy OUTPUT_SCHEMA.
+
+Do not change valid file content.
+Do not add files.
+Do not remove required files.
+Return JSON only.
+Do not return markdown fences.
+"""
+
+        repair_response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": repair_prompt},
+            ],
+            temperature=0.0,
+            max_tokens=8192,
+            extra_body={
+                "num_predict": 8192,
+                "chat_template_kwargs": {
+                    "enable_thinking": False
+                }
+            }
         )
 
-        data = safe_json_loads(regenerated)
+        repair_raw = repair_response.choices[0].message.content
+
+        if not repair_raw:
+            raise RuntimeError("Schema repair returned empty response.")
+
+        repair_json = extract_json(repair_raw)
+        repair_json = sanitize_json_string(repair_json)
+        data = safe_json_loads(repair_json)
         validate(instance=data, schema=OUTPUT_SCHEMA)
 
     if not isinstance(data, dict):
@@ -585,6 +759,17 @@ Generated JSON:
 
 {json.dumps(data, ensure_ascii=False)}
 
+Project Rules:
+{context['rules']}
+
+Task Rules:
+{context['task_rules']}
+
+Review Rules:
+{context['review_rules']}
+
+Task Review Rules:
+{context['task_review_rules']}
 Review it.
 Return JSON only.
 """
@@ -659,6 +844,12 @@ Return JSON only.
 
         if retry_count >= MAX_RETRY:
             print("\nMax retry reached")
+
+            if context.get("task_type") == "infrastructure":
+                raise RuntimeError(
+                    "Infrastructure review failed after maximum retries."
+                )
+
             print("Continue pipeline with warnings")
             break
 
@@ -746,14 +937,17 @@ def generate_files(data: Dict[str, Any], allowed_paths: Optional[Set[str]] = Non
     print(f"SAFE_ROOT = {SAFE_ROOT}")
 
     for file in data.get("files", []):
+        relative_path = file.get("path", "")
+
         try:
             import yaml
 
-            relative_path = file.get("path")
+            if relative_path.startswith("generated/files/"):
+                relative_path = relative_path[len("generated/files/"):]
             print(f"\n===== FILE ===== {relative_path}")
 
             if relative_path:
-                relative_path = relative_path.strip()
+                relative_path = normalize_generated_path(relative_path)
 
             content = file.get("content")
 
@@ -766,10 +960,12 @@ def generate_files(data: Dict[str, Any], allowed_paths: Optional[Set[str]] = Non
                 continue
 
             if relative_path.endswith((".yml", ".yaml")):
-                print("===== BEFORE REPAIR =====")
-                print(content)
-                content = repair_podman_yaml_content(content)
-                print("===== AFTER REPAIR =====")
+                # print("===== BEFORE REPAIR =====")
+                # print(content)
+                # content = repair_podman_yaml_content(content)
+                # print("===== AFTER REPAIR =====")
+                # print(content)
+                print("===== YAML INPUT =====")
                 print(content)
 
             if not content.strip():
@@ -910,23 +1106,53 @@ def analyze_browser_validation(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     status = payload.get("status")
     body = payload.get("body") or ""
     headers = payload.get("headers") or {}
+    body_text = body.lower() if isinstance(body, str) else ""
 
-    if payload.get("success") is False:
+    if isinstance(body, str) and "could not find driver" in body_text:
+        issues.append({
+            "type": "missing_pdo_driver",
+            "category": "infrastructure",
+            "severity": "blocker",
+            "detail": "PHP PDO MySQL driver is missing. Install pdo_mysql in PHP container via ansible/playbook.yml.",
+            "repair_target": "ansible/playbook.yml",
+        })
+
+    elif payload.get("success") is False:
         issues.append({
             "type": "browser_connection_error",
-            "detail": payload.get("stderr", "Browser validation failed")
+            "category": "infrastructure",
+            "severity": "blocker",
+            "detail": payload.get("stderr", "Browser validation failed"),
+            "repair_target": "ansible/playbook.yml",
         })
 
     if isinstance(status, int) and status >= 400:
-        issues.append({"type": "browser_status", "severity": "warning", "detail": f"HTTP status {status}"})
+        issues.append({
+            "type": "browser_status",
+            "category": "application" if status == 404 else "infrastructure",
+            "severity": "warning",
+            "detail": f"HTTP status {status}",
+            "repair_target": "src/index.php" if status == 404 else "ansible/playbook.yml",
+        })
 
-    body_text = body.lower()
     if isinstance(body, str) and ("fatal error" in body_text or "parse error" in body_text or "uncaught" in body_text):
-        issues.append({"type": "browser_body", "severity": "warning", "detail": "Response body contains an error message"})
+        issues.append({
+            "type": "browser_body",
+            "category": "application",
+            "severity": "warning",
+            "detail": "Response body contains a PHP runtime or fatal error",
+            "repair_target": "src/index.php",
+        })
 
     content_type = headers.get("Content-Type") if isinstance(headers, dict) else None
     if isinstance(content_type, str) and "text/html" in content_type.lower() and not body.strip():
-        issues.append({"type": "browser_empty", "severity": "warning", "detail": "HTML response body is empty"})
+        issues.append({
+            "type": "browser_empty",
+            "category": "application",
+            "severity": "warning",
+            "detail": "HTML response body is empty",
+            "repair_target": "src/index.php",
+        })
 
     return issues
 
@@ -1074,6 +1300,7 @@ def repair_validation_errors(
     validation_stderr: str,
     architecture: str,
     rules: str,
+    task_rules: str,
     format_rules: str,
     safe_root: Path,
     target_file_override: Optional[str] = None,
@@ -1091,21 +1318,29 @@ def repair_validation_errors(
             override_path = Path(target_file_override)
             if override_path.is_absolute():
                 try:
-                    target_files.add(str(override_path.relative_to(safe_root.resolve())).replace("\\", "/"))
+                    target_file = str(
+                        override_path.relative_to(safe_root.resolve())
+                    ).replace("\\", "/")
                 except ValueError:
-                    target_files.add(str(override_path))
+                    target_file = str(override_path)
             else:
-                target_files.add(target_file_override.replace("\\", "/"))
+                target_file = target_file_override.replace("\\", "/")
+
+            target_files.add(normalize_generated_path(target_file))
+
         elif file_value:
             resolved_file = Path(file_value)
             if not resolved_file.is_absolute():
                 resolved_file = (safe_root / file_value).resolve()
             try:
-                target_files.add(str(resolved_file.relative_to(safe_root.resolve())).replace("\\", "/"))
+                target_file = str(
+                    resolved_file.relative_to(safe_root.resolve())
+                ).replace("\\", "/")
+
+                target_files.add(normalize_generated_path(target_file))
+
             except ValueError:
                 target_files.add("ansible/playbook.yml")
-        else:
-            target_files.add("ansible/playbook.yml")
 
     for target_file in target_files:
         print(f"[ERROR] {target_file}")
@@ -1126,9 +1361,11 @@ def repair_validation_errors(
             architecture,
             regeneration_context,
             rules,
+            task_rules,
             format_rules,
         )
-        # regenerated = extract_file_content_from_response(regenerated)
+
+        regenerated = extract_file_content_from_response(regenerated)
         print("===== REGENERATE regenerate_file_with_context RETURN CHECK =====")
         print(type(regenerated))
         print(repr(regenerated[:100]) if regenerated else regenerated)
@@ -1168,23 +1405,82 @@ def repair_publish_port(playbook_path):
         encoding="utf-8"
     )
 
-
 def perform_deploy_cycle() -> Tuple[dict, dict, dict, bool]:
-    """Run deploy_pipeline, collect evidence, analyze error, and return all outputs.
+    """Run deploy, collect evidence, determine success, and analyze failures.
 
-    Returns: (deploy_result, deploy_evidence, deploy_diagnosis, deploy_success)
+    Returns:
+        (deploy_result, deploy_evidence, deploy_diagnosis, deploy_success)
+
+    Success is determined from deterministic deployment evidence.
+    Root Cause Analysis is used only when deployment is not successful.
     """
+
     deploy_result = deploy_pipeline()
     deploy_evidence = collect_deploy_evidence()
-    deploy_diagnosis = analyze_deploy_error(deploy_result, deploy_evidence)
-    deploy_success = bool(deploy_result.get("success"))
-    return deploy_result, deploy_evidence, deploy_diagnosis, deploy_success
+
+    # =========================================================
+    # 1. Determine deploy success from actual execution results
+    # =========================================================
+
+    return_code = deploy_result.get("return_code")
+    if return_code is None:
+        return_code = 0 if deploy_result.get("success") else 1
+
+    deploy_success = (return_code == 0)
+
+    # =========================================================
+    # 2. Successful deployment does not require RCA
+    # =========================================================
+
+    if deploy_success:
+        deploy_diagnosis = {
+            "category": "deployment",
+            "root_cause": "none",
+            "reason": "Deployment completed successfully.",
+            "confidence": 1.0,
+        }
+
+        return (
+            deploy_result,
+            deploy_evidence,
+            deploy_diagnosis,
+            True,
+        )
+
+    # =========================================================
+    # 3. Deployment failed -> perform Root Cause Analysis
+    # =========================================================
+
+    deploy_diagnosis = analyze_deploy_error(
+        deploy_result,
+        deploy_evidence,
+    )
+
+    # =========================================================
+    # 4. If RCA itself is unavailable, preserve the failure state
+    # =========================================================
+
+    if not deploy_diagnosis:
+        deploy_diagnosis = {
+            "category": "deployment",
+            "root_cause": "diagnosis_unavailable",
+            "reason": "Deployment failed, but deploy error analysis returned no diagnosis.",
+            "confidence": 0.0,
+        }
+
+    return (
+        deploy_result,
+        deploy_evidence,
+        deploy_diagnosis,
+        False,
+    )
 
 # =========================================================
 # main()
 # =========================================================
 
 def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: str) -> None:
+    deploy_result = {}
     deploy_evidence = {}
     deploy_diagnosis = {}
 
@@ -1244,19 +1540,63 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
     except Exception as e:
         validation_errors.append({"type": "yaml_parse", "file": str(playbook_file), "stderr": str(e)})
 
-    validation_errors, stdout, stderr = run_validation(SAFE_ROOT, inventory_file, playbook_file, php_file)
-
-    if validation_errors:
-        print("\n=== VALIDATION FAILED ===")
-        for err in validation_errors:
-            print(json.dumps(err, indent=2, ensure_ascii=False))
-
     validation_success = False
 
     for attempt in range(MAX_VALIDATION_RETRY):
         print(f"\n===== VALIDATION ATTEMPT {attempt + 1} =====")
-        validation_errors, stdout, stderr = run_validation(SAFE_ROOT, inventory_file, playbook_file, php_file)
+
+        static_validation_errors = []
+
+        try:
+            import yaml
+
+            if not playbook_file.exists():
+                static_validation_errors.append({
+                    "type": "missing_playbook",
+                    "file": str(playbook_file)
+                })
+            else:
+                playbook_text = playbook_file.read_text(encoding="utf-8")
+                yaml.safe_load(playbook_text)
+
+            if not inventory_file.exists():
+                static_validation_errors.append({
+                    "type": "missing_inventory",
+                    "file": str(inventory_file)
+                })
+            else:
+                inventory_text = inventory_file.read_text(encoding="utf-8")
+                if "asbsvr" not in inventory_text or "rockey8" not in inventory_text:
+                    static_validation_errors.append({
+                        "type": "invalid_inventory",
+                        "file": str(inventory_file),
+                        "stderr": "Inventory format is invalid."
+                    })
+
+            if not php_file.exists():
+                static_validation_errors.append({
+                    "type": "missing_php",
+                    "file": str(php_file)
+                })
+
+        except Exception as e:
+            static_validation_errors.append({
+                "type": "yaml_parse",
+                "file": str(playbook_file),
+                "stderr": str(e)
+            })
+
+        runtime_validation_errors, stdout, stderr = run_validation(
+            SAFE_ROOT,
+            inventory_file,
+            playbook_file,
+            php_file
+        )
+
+        validation_errors = static_validation_errors + runtime_validation_errors
+
         print("ERROR COUNT =", len(validation_errors))
+
         for e in validation_errors:
             print(e["type"])
 
@@ -1275,9 +1615,15 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
             stderr,
             context["architecture"],
             context["rules"],
+            context["task_rules"],
             context["format_rules"],
             SAFE_ROOT,
         )
+
+    if not validation_success:
+        print("\nValidation failed. Deployment will not start.")
+        print(json.dumps(validation_errors, indent=2, ensure_ascii=False))
+        return
 
     # repair完了後に転送
     print(playbook_file.read_text())
@@ -1306,7 +1652,66 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
         print("Remote validation failed")
         for e in remote_errors:
             print(e)
-        raise RuntimeError("Remote validation failed")
+
+        # Remote validation error を Infrastructure Repair に渡す
+        regeneration_context = {
+            "source": "remote_validation",
+            "errors": remote_errors,
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+
+        # 現時点では Remote Validation のエラー対象は
+        # Infrastructure playbook として扱う
+        repair_target = "ansible/playbook.yml"
+
+        print(
+            f"===== REMOTE VALIDATION REPAIR: {repair_target} ====="
+        )
+
+        regenerated = regenerate_file_with_context(
+        repair_target,
+        context["architecture"],
+        regeneration_context,
+        context["rules"],
+        context["task_rules"],
+        context["format_rules"],
+    )
+
+        if regenerated is None:
+            raise RuntimeError(
+                f"Remote validation repair returned None: {repair_target}"
+            )
+
+        # regenerate_file_with_context() の返却値は、
+        # 「ファイル本文」または「JSON形式の再生成レスポンス」の可能性がある。
+        # 必ずファイル本文へ正規化してから後処理する。
+        regenerated = extract_file_content_from_response(regenerated)
+
+        if repair_target.endswith((".yml", ".yaml")):
+            regenerated = postprocess_regenerated_file_content(
+                regenerated,
+                repair_target,
+            )
+
+        safe_write_file(
+            SAFE_ROOT,
+            repair_target,
+            regenerated,
+        )
+
+        print(
+            f"Regenerated file written to SAFE_ROOT: {repair_target}"
+        )
+
+        # 修復した成果物を再度 Control Node へ転送して検証
+        remote_errors, stdout, stderr = run_remote_validation()
+
+        if remote_errors:
+            print("Remote validation failed after repair")
+            for e in remote_errors:
+                print(e)
+            raise RuntimeError("Remote validation failed after repair")
 
     deploy_success = False
     if validation_success:
@@ -1314,58 +1719,105 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
         print(playbook_file.read_text())
         deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = perform_deploy_cycle()
 
-    if deploy_success:
-        for repair_attempt in range(2):
-            print(f"\n===== BROWSER VALIDATION (attempt {repair_attempt + 1}) =====")
-            browser_result = run_browser_validation()
-            browser_issues = analyze_browser_validation(browser_result)
-            print(json.dumps(browser_result, indent=2, ensure_ascii=False))
-            print("Browser issues:", json.dumps(browser_issues, ensure_ascii=False))
+    pod_state = check_pod_state()
 
-            print("\n===== PHP LINT =====")
-            lint_result = run_php_lint()
-            lint_issues = analyze_php_lint_result(lint_result)
-            print(json.dumps(lint_result, indent=2, ensure_ascii=False))
-            print("PHP lint issues:", json.dumps(lint_issues, ensure_ascii=False))
+    deploy_evidence["pod_state"] = pod_state
 
-            diagnosis = review_data.get("diagnosis", {})
-            repair_target = plan_repair(
-                diagnosis,
-                browser_result,
-                browser_issues,
-                lint_result,
-                lint_issues,
-                deploy_result,
-                deploy_diagnosis,
-            )
+    if not pod_state["pod_running"]:
+        print("Pod is not running after deploy")
 
-            if not browser_issues and not lint_issues:
-                break
+        deploy_success = False
 
-            repair_target = "src/index.php"
-            repair_validation_errors(
-                [{"type": issue["type"], "file": "ansible/playbook.yml", "stderr": issue["detail"]} for issue in browser_issues + lint_issues],
-                browser_result.get("stdout", "") + "\n" + lint_result.get("stdout", ""),
-                browser_result.get("stderr", "") + "\n" + lint_result.get("stderr", ""),
-                context["architecture"],
-                context["rules"],
-                context["format_rules"],
-                SAFE_ROOT,
-                target_file_override=repair_target,
-                deploy_evidence=deploy_evidence,
-                deploy_diagnosis=deploy_diagnosis
-            )
+        deploy_diagnosis = {
+            "category": "deployment",
+            "root_cause": "pod_not_running",
+            "reason": "lamp-pod exists but is not running after deployment.",
+            "confidence": 0.99,
+            "repair_hint": "Ensure the deployment starts the existing Pod and its containers.",
+            "repair_target": "ansible/playbook.yml",
+        }
 
-            print("\n===== REDEPLOY AFTER REPAIR =====")
-            deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = perform_deploy_cycle()
-            if not deploy_success:
-                break
+#    if deploy_success:
+    for repair_attempt in range(2):
+        print(f"\n===== BROWSER VALIDATION (attempt {repair_attempt + 1}) =====")
+        browser_result = run_browser_validation()
+        browser_issues = analyze_browser_validation(browser_result)
+        print(json.dumps(browser_result, indent=2, ensure_ascii=False))
+        print("Browser issues:", json.dumps(browser_issues, ensure_ascii=False))
+
+        print("\n===== PHP LINT =====")
+        lint_result = run_php_lint()
+        lint_issues = analyze_php_lint_result(lint_result)
+        print(json.dumps(lint_result, indent=2, ensure_ascii=False))
+        print("PHP lint issues:", json.dumps(lint_issues, ensure_ascii=False))
+
+        diagnosis = review_data.get("diagnosis", {})
+        repair_target = plan_repair(
+            diagnosis,
+            browser_result,
+            browser_issues,
+            lint_result,
+            lint_issues,
+            deploy_result,
+            deploy_diagnosis,
+        )
+
+        if not browser_issues and not lint_issues:
+            validation_success = deploy_success
+            break
+
+        validation_success = False
+
+        error_list = [
+            {"type": issue.get("type", "validation_error"), "file": repair_target, "stderr": issue.get("detail", "")}
+            for issue in browser_issues + lint_issues
+        ]
+
+        repair_validation_errors(
+            error_list,
+            browser_result.get("stdout", "") + "\n" + lint_result.get("stdout", ""),
+            browser_result.get("stderr", "") + "\n" + lint_result.get("stderr", ""),
+            context["architecture"],
+            context["rules"],
+            context["task_rules"],
+            context["format_rules"],
+            SAFE_ROOT,
+            target_file_override=repair_target,
+            deploy_evidence=deploy_evidence,
+            deploy_diagnosis=deploy_diagnosis
+        )
+
+        print("\n===== SCP TO ANSIBLE CONTROL NODE (after repair) =====")
+        run_command([
+            "scp",
+            "-r",
+            str(SAFE_ROOT),
+            f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
+        ])
+
+        print("\n===== REDEPLOY AFTER REPAIR =====")
+        deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = perform_deploy_cycle()
+        if not deploy_success:
+            break
+
+    if not validation_success and deploy_success:
+        combined_issues = browser_issues + lint_issues
+        primary_issue = combined_issues[0] if combined_issues else {}
+        target = primary_issue.get("repair_target", "src/index.php")
+        deploy_diagnosis = {
+            "category": primary_issue.get("category", "application"),
+            "root_cause": primary_issue.get("type", "browser_validation_failed"),
+            "reason": primary_issue.get("detail", "Browser validation or PHP lint failed."),
+            "confidence": 0.9,
+            "repair_hint": f"Fix {target}.",
+            "repair_target": target,
+        }
 
     print("validation_success =", validation_success)
     print("deploy_success =", deploy_success)
     print(json.dumps(deploy_diagnosis, indent=2))
 
-    if deploy_diagnosis and deploy_diagnosis["root_cause"] == "none":
+    if deploy_success and validation_success and deploy_diagnosis and deploy_diagnosis.get("root_cause") == "none":
         print("Pipeline completed successfully")
         return
 
@@ -1377,14 +1829,15 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
             ensure_ascii=False
         ))
 
-        if deploy_diagnosis is not None:
-            repair_target = deploy_diagnosis.get("repair_target")
-        else:
-            repair_target = None
+        repair_target: Optional[str] = None
+
+        if isinstance(deploy_diagnosis, dict):
+            candidate = deploy_diagnosis.get("repair_target")
+            if isinstance(candidate, str) and candidate:
+                repair_target = candidate
 
         if repair_target:
             print(f"\n===== DEPLOY AUTO REPAIR ({repair_target}) =====")
-
             # If the error is privileged port binding, apply quick port fix.
             error_text = (
                 deploy_result.get("stdout", "")
@@ -1414,15 +1867,21 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
                         context["architecture"],
                         regeneration_context,
                         context["rules"],
+                        context["task_rules"],
                         context["format_rules"],
                     )
 
                     if regenerated is None:
                         raise RuntimeError(f"Regeneration returned None: {repair_target}")
 
-                    if repair_target.endswith((".yml", ".yaml")):
-                        regenerated = repair_podman_yaml_content(regenerated)
+                    regenerated = extract_file_content_from_response(regenerated)
 
+                    if repair_target.endswith((".yml", ".yaml")):
+                        regenerated = postprocess_regenerated_file_content(
+                            regenerated,
+                            repair_target,
+                        )
+                        
                     safe_write_file(SAFE_ROOT, repair_target, regenerated)
                     print(f"Regenerated file written to SAFE_ROOT: {repair_target}")
 
@@ -1484,6 +1943,14 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
             
             if deploy_diagnosis and deploy_diagnosis["root_cause"] == "none":
                 print("Pipeline completed successfully")
+                context["deployment_contract"].update({
+                    "web_url": "http://192.168.122.10:8080",
+                    "db_host": "mysql",
+                    "db_port": 3306,
+                    "db_name": "testdb",
+                    "db_user": "root",
+                    "db_password": "secret",
+                })
                 return
 
         # Certain diagnosed root causes should trigger an automatic
@@ -1523,14 +1990,20 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
                     context["architecture"],
                     regeneration_context,
                     context["rules"],
+                    context["task_rules"],
                     context["format_rules"],
                 )
 
                 if regenerated is None:
                     raise RuntimeError(f"Regeneration returned None: {file_to_repair}")
 
+                regenerated = extract_file_content_from_response(regenerated)
+
                 if file_to_repair.endswith((".yml", ".yaml")):
-                    regenerated = repair_podman_yaml_content(regenerated)
+                    regenerated = postprocess_regenerated_file_content(
+                        regenerated,
+                        file_to_repair,
+                    )
 
                 safe_write_file(SAFE_ROOT, file_to_repair, regenerated)
                 print("Regenerated file written to SAFE_ROOT:", file_to_repair)
@@ -1571,6 +2044,14 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
 
             if deploy_diagnosis.get("root_cause") == "none":
                 print("Pipeline completed successfully after auto-repair")
+                context["deployment_contract"].update({
+                    "web_url": "http://192.168.122.10:8080",
+                    "db_host": "mysql",
+                    "db_port": 3306,
+                    "db_name": "testdb",
+                    "db_user": "root",
+                    "db_password": "secret",
+                })
                 return
 
         raise RuntimeError("Deploy failed")
@@ -1754,6 +2235,7 @@ def run_application_pipeline(
                     "",
                     context["architecture"],
                     context["rules"],
+                    context["task_rules"],
                     context["format_rules"],
                     SAFE_ROOT,
                     available_php_files=available_files,
@@ -1775,6 +2257,7 @@ def run_application_pipeline(
             "\n".join(err.get("stderr", "") for err in validation_errors),
             context["architecture"],
             context["rules"],
+            context["task_rules"],
             context["format_rules"],
             SAFE_ROOT,
         )
@@ -1815,6 +2298,7 @@ def run_application_pipeline(
                 print("Remote validation reported errors:")
                 for e in remote_errors:
                     print(e)
+                return
         except Exception as e:
             print("Remote validation failed:", e)
 
@@ -1850,12 +2334,12 @@ def run_application_pipeline(
     print("\n===== APPLICATION PIPELINE END =====")
 
 def main() -> None:
-    context = load_context()
-
     task_handlers = {
         "infrastructure": run_infrastructure_pipeline,
         "application": run_application_pipeline,
     }
+
+    shared_context = None
 
     for task_name in TASK_SEQUENCE:
         task = load_task(task_name)
@@ -1867,7 +2351,12 @@ def main() -> None:
             continue
 
         print(f"\n===== RUN TASK: {task_name} =====")
+
+        context = load_context(task_type,previous_context=shared_context,)
+
         handler(context, task_name, task)
+
+        shared_context = context
 
 
 if __name__ == "__main__":

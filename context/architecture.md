@@ -1,37 +1,40 @@
 # Runtime Architecture
 
-## Inventory
+Inventory:
 
-[control]
-asbsvr
+- control: asbsvr
+- execution: rockey8
 
-[execution]
-rockey8
+Runtime:
 
-Do not place asbsvr under execution.
+- Podman
+- pod: lamp-pod
+- pod state: started
 
-## Runtime
+Containers:
 
-- Runtime: Podman
-- Pod name: lamp-pod
-- Required pod state: started
+- web: php
+- web image: php:8.2-apache
+- database: mysql
+- database image: mysql:8.0
 
-## Podman Rules
+Web:
 
-- Prefer containers.podman modules over shell.
-- Use containers.podman.podman_pod for the pod.
-- Use containers.podman.podman_container for containers.
-- Publish ports only through podman_pod.publish.
-- Do not publish ports from podman_container.
-- Use env for container environment variables, not environment.
-- Do not use unsupported module parameters.
+- document root: /var/www/html
+- host path: /home/vboxuser/containers/html
+- PDO MySQL is required
 
-## Container Expectations
+Database:
 
-- Web container name: php
-- Database container name: mysql
-- Web image: php:8.2-apache
-- Database image: mysql:8.0
-- Web container document root: /var/www/html
-- Host path for web files: /home/vboxuser/containers/html
-- Database name: testdb
+- name: mysql
+- image: mysql:8.0
+- database: testdb
+
+Podman:
+
+- prefer containers.podman modules
+- use podman_pod for the pod
+- use podman_container for containers
+- publish ports through podman_pod
+- use env, not environment
+- never invent module parameters

@@ -11,3 +11,14 @@
 - Podman前提の動作を想定する。
 - 依存関係を増やさず、最小構成で動くコードを返す。
 - 余計な説明や補助ファイルは作らない。
+
+Target file:
+src/index.php
+
+The target file is PHP.
+Return ONLY the complete PHP source code.
+Do not return YAML.
+Do not return Ansible.
+Do not return Podman configuration.
+Do not return JSON.
+Do not return Markdown.

@@ -1,26 +1,27 @@
 # Infrastructure Task
 
-Goal
+Create a runnable Podman LAMP environment.
 
-Create a runnable LAMP environment.
-
-Generate
+Required files:
 
 - ansible/playbook.yml
 - ansible/inventory.ini
 - src/index.php
 
-Requirements
+Requirements:
 
-- Use Podman.
-- Use lamp-pod.
-- Publish 8080:80.
-- Mount /home/vboxuser/containers/html.
-- Copy src/index.php.
-- Browser must display index.php.
+- use lamp-pod
+- publish 8080:80
+- mount /home/vboxuser/containers/html
+- deploy src/index.php to /home/vboxuser/containers/html/index.php
+- PHP must provide PDO MySQL
+- browser must display index.php
 
-Completion Criteria
+Completion:
 
-- YAML Validation passed.
-- Deploy succeeded.
-- Browser test succeeded.
+- YAML validation passes
+- deployment succeeds
+- browser validation succeeds
+
+infrastructureのPHP検証ページはDB接続を行わない。
+src/index.php は Infrastructure OK の表示だけを行う。

@@ -1,35 +1,24 @@
 # Review Rules
 
-Review for pipeline viability rather than perfect production hygiene.
+Review for pipeline viability, not perfect production quality.
 
-Reject when:
+Approve when no blocking problem exists.
 
-- the artifact clearly breaks the pipeline
-- secrets or destructive actions are exposed
-- unsupported module parameters are used
-- podman_pod.state is not started
-- podman_container contains ports
-- container environment uses environment instead of env
-- the web container mounts to a path other than /var/www/html
-- the database container name is not mysql
-- shell-based Podman management is used when a containers.podman module exists
-- Reject if the playbook does not deploy src/index.php to /home/vboxuser/containers/html/index.php
+Reject only when the artifact:
 
-Allow temporary, local-learning compromises when the pipeline can still proceed.
+- breaks the pipeline
+- exposes secrets or destructive actions
+- uses unsupported parameters
+- has a clear syntax/configuration failure
+- violates an explicit task or task-review rule
 
-Playbookに以下が存在しない場合はレビューをRejectすること。
+Allow temporary local-learning compromises when the pipeline can proceed.
 
-- Podman Pod作成
-- PHPコンテナ作成
-- MySQLコンテナ作成
-- src/index.php を /home/vboxuser/containers/html/index.php へ配置する copy または同等のタスク
+During repair:
 
-Never approve a playbook if:
+- preserve valid existing content
+- change only the reported problem
+- do not rewrite unrelated content
+- return the complete corrected file
 
-Reject if:
-
-- Unsupported Ansible module parameters are used.
-- Unsupported Podman module parameters are introduced.
-- Existing Podman tasks are modified without necessity.
-- Existing validated tasks are rewritten.
-- The review must reject any playbook that invents module parameters.
+Warnings are for non-blocking issues.

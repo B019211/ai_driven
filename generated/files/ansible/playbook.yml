@@ -1,0 +1,45 @@
+---
+- name: Create LAMP Podman Pod
+  hosts: execution
+  tasks:
+    - name: Create lamp-pod
+      containers.podman.podman_pod:
+        name: lamp-pod
+        publish:
+          - "8080:80"
+        state: started
+
+    - name: Add PHP container to pod
+      containers.podman.podman_container:
+        name: php
+        pod: lamp-pod
+        image: php:8.2-apache
+        state: started
+        volumes:
+          - /home/vboxuser/containers/html:/var/www/html
+        env:
+          db_host: mysql
+          db_port: 3306
+          db_name: testdb
+          db_user: root
+          db_password: secret
+        command:
+          - sh
+          - -c
+          - "docker-php-ext-install pdo_mysql && apache2-foreground"
+
+    - name: Add MySQL container to pod
+      containers.podman.podman_container:
+        name: mysql
+        pod: lamp-pod
+        image: mysql:8.0
+        state: started
+        env:
+          MYSQL_DATABASE: testdb
+          MYSQL_ROOT_PASSWORD: secret
+
+    - name: Deploy index.php
+      copy:
+        src: "{{ playbook_dir }}/../src/index.php"
+        dest: /home/vboxuser/containers/html/index.php
+        mode: 0644

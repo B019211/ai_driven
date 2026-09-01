@@ -1,12 +1,9 @@
 # Task
 
-Current phase: Learning
+Phase: Learning
 
 Goal:
-
-- Complete the pipeline.
-- Generate the required files.
-- Pass review and validation.
+Complete the pipeline and pass generation, review, validation, deployment, and browser validation.
 
 Required files:
 
@@ -14,14 +11,18 @@ Required files:
 - ansible/inventory.ini
 - src/index.php
 
-Constraints:
+Generate only these files.
 
-- Generate only these files.
-- inventory.ini must include asbsvr and rockey8.
+Inventory must contain:
+[control]
+asbsvr
+
+[execution]
+rockey8
 
 Priority:
 
 1. Pipeline completion
-2. Stable JSON
+2. Valid JSON
 3. Valid YAML
 4. Minimal working configuration
