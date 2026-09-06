@@ -2,27 +2,31 @@
 
 Phase: Learning
 
-Goal:
-Complete the pipeline and pass generation, review, validation, deployment, and browser validation.
+## Goal
 
-Required files:
+Complete the AI-driven CI/CD pipeline.
 
-- ansible/playbook.yml
-- ansible/inventory.ini
-- src/index.php
+The pipeline must complete the following stages in order:
 
-Generate only these files.
+1. Generation
+2. Review
+3. Validation
+4. Deployment
+5. Browser validation
+6. Application phase
 
-Inventory must contain:
-[control]
-asbsvr
+A failed Infrastructure phase must stop the pipeline before Application generation.
 
-[execution]
-rockey8
-
-Priority:
+## Priority
 
 1. Pipeline completion
 2. Valid JSON
 3. Valid YAML
-4. Minimal working configuration
+4. Valid executable configuration
+5. Minimal working configuration
+
+## Scope
+
+Each phase-specific task defines its own required files and responsibilities.
+
+Do not use this file to expand the file scope of a phase-specific task.

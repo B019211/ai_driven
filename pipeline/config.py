@@ -16,7 +16,7 @@ PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
 TASK_DIR = Path("tasks")
 SAFE_ROOT: Path = (PROJECT_ROOT / "generated/files").resolve()
 
-MODEL_NAME: str = "qwen3:8b"
+MODEL_NAME: str = "qwen3:4b-instruct-2507-q4_K_M"
 PIPELINE_PHASE: str = "learning"
 
 ANSIBLE_CONTROL_NODE: str = "asbsvr"

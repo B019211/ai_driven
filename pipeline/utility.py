@@ -287,9 +287,15 @@ def plan_repair(
         if category and category in CATEGORY_TO_TARGET:
             return CATEGORY_TO_TARGET[category]
 
-    # 2. PHP lint issues は application (src/index.php)
-    if lint_issues:
-        return "src/index.php"
+    # 2. PHP lint issues から repair_target を判定
+    for issue in lint_issues:
+        target = issue.get("repair_target")
+        if target:
+            return target
+
+        category = issue.get("category")
+        if category and category in CATEGORY_TO_TARGET:
+            return CATEGORY_TO_TARGET[category]
 
     # 3. deploy_diagnosis からの判定
     if deploy_diagnosis:

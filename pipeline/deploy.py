@@ -296,7 +296,7 @@ def run_browser_validation() -> Dict[str, Any]:
     max_attempts = 10
     retry_interval = 2
 
-    code = 0
+    code = 1
     stdout = ""
     stderr = ""
 
@@ -348,7 +348,13 @@ def run_browser_validation() -> Dict[str, Any]:
 
     status_line = header_lines[0] if header_lines else ""
 
-    status_code = 200
+    status_code = 0
+    if code != 0:
+        success = False
+    elif status_code == 0:
+        success = False
+    elif status_code >= 400:
+        success = False
 
     if status_line.startswith("HTTP/"):
         status_code = int(status_line.split()[1])

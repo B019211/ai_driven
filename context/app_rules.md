@@ -2,22 +2,36 @@
 
 ## Application Scope
 
-- Generate application source files only.
-- Do not generate or modify infrastructure, Ansible, or Podman configuration.
-- Generate only files explicitly requested by the application task.
-- Do not redesign infrastructure or introduce unrequested frameworks, services, or dependencies.
+Generate application source files only.
+
+Do not generate or modify:
+
+- Infrastructure files
+- Ansible files
+- Podman configuration
+- infrastructure runtime configuration
+
+Generate only files explicitly requested by the Application Task.
+
+Do not redesign Infrastructure.
+
+Do not introduce unrequested frameworks, services or dependencies.
+
+## Infrastructure Boundary
+
+Infrastructure must already be completed before Application generation starts.
+
+Application generation must not start when Infrastructure completion is false.
+
+The Application receives the Deployment Contract from the completed Infrastructure phase.
+
+The Application must not create or modify the Deployment Contract.
 
 ## Deployment Contract
 
-The Application task receives a Deployment Contract from the Infrastructure task.
+The Deployment Contract is authoritative.
 
-The Deployment Contract is the authoritative source for infrastructure-provided connection information.
-
-Before generating application code, read the Deployment Contract and use its values consistently.
-
-Do not guess, infer, replace, invent, or modify Contract values.
-
-For database access, the following values MUST come from the Deployment Contract:
+Required values:
 
 - db_host
 - db_port
@@ -25,33 +39,18 @@ For database access, the following values MUST come from the Deployment Contract
 - db_user
 - db_password
 
-Do not guess, replace, or invent these values.
+Do not:
 
-The Application task must not modify the Deployment Contract.
-
-The Application task must not invent a runtime mechanism for receiving
-Deployment Contract values.
-
-Do not assume database connection values are available through environment
-variables unless the task explicitly defines environment variables as the
-runtime mechanism.
-
-If the runtime mechanism is not defined, do not introduce getenv(), default
-values, placeholders, or alternative connection settings.
-
-## Database Access
-
-- Use PHP 8.2 compatible syntax.
-- Use PDO with the MySQL driver.
-- Database connection values MUST come from the Deployment Contract.
-- The runtime mechanism for providing Contract values MUST be explicitly defined.
-- Do not invent environment variable names or other runtime mechanisms.
-- Construct the PDO DSN from db_host, db_port, and db_name.
-- Use db_user and db_password for authentication.
+- guess values
+- infer values
+- replace values
+- invent values
+- modify values
+- introduce an alternative runtime mechanism
 
 ## Runtime Mechanism
 
-The Infrastructure task provides the Deployment Contract values to the PHP runtime through environment variables.
+Infrastructure provides the Deployment Contract database values to the PHP runtime through environment variables.
 
 The environment variable names are exactly:
 
@@ -61,14 +60,31 @@ The environment variable names are exactly:
 - db_user
 - db_password
 
-Application code MUST read these values using getenv().
+Application code must use `getenv()` to read them.
 
-Do not hardcode database connection values.
-Do not introduce alternative runtime mechanisms.
+Do not hardcode connection values.
+
+## Database Access
+
+When database access is required:
+
+- use PHP 8.2 compatible syntax
+- use PDO
+- use the MySQL PDO driver
+- construct the DSN from `db_host`, `db_port`, and `db_name`
+- authenticate using `db_user` and `db_password`
+
+Do not modify Infrastructure to solve an Application problem.
 
 ## Validation
 
-- Generated PHP must pass PHP syntax validation.
-- Application behavior must be validated through the existing deployment environment.
-- Database connectivity must use the Deployment Contract values.
-- If required Contract values are missing, do not invent alternatives.
+Generated PHP must:
+
+- pass PHP syntax validation
+- execute in the existing Infrastructure runtime
+- use the Deployment Contract
+- satisfy the current Application Task
+
+If required Contract values are missing, stop.
+
+Do not invent alternatives.

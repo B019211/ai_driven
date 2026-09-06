@@ -1,38 +1,33 @@
 # AI Output Format
 
-Return valid JSON only.
+Return exactly one valid JSON object.
 
-Required top-level fields:
+The top-level object must contain exactly these keys:
 
 - summary
 - files
 - commands
 - risks
 
-Each files entry:
+Each files item must contain exactly these keys:
 
 - path
 - content
 
+Do not use ansible, src, or inventory as top-level keys.
+
 Paths must be relative to SAFE_ROOT.
 
-Do not include generated/, absolute Windows paths, or absolute Linux paths.
+Do not include:
 
-The entire response must be parseable by Python json.loads().
+- generated/
+- absolute Windows paths
+- absolute Linux paths
 
-Content must be valid JSON strings.
-Escape backslashes, quotes, and newlines according to JSON rules.
-Do not add unnecessary backslashes.
+The complete response must be parseable by Python `json.loads()`.
 
-When content contains source code, the content value is a JSON string.
+Source code must be represented as a JSON string.
 
-All backslashes in source code MUST be escaped according to JSON syntax.
+Escape characters according to standard JSON syntax.
 
-Example:
-PHP source:
-new \PDO()
-
-JSON representation:
-"new \\PDO()"
-
-The complete response MUST be valid JSON and parseable by Python json.loads().
+Do not add explanatory prose, Markdown, or code fences outside the JSON object.
