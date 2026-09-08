@@ -9,6 +9,7 @@ from typing import List
 BLOCKING_SEVERITIES: List[str] = ["BLOCKER"]
 
 MAX_RETRY: int = 1
+MAX_REVIEW_SCHEMA_RETRY: int = 2
 MAX_VALIDATION_RETRY: int = 2
 MAX_DEPLOY_RETRY: int = 3
 
@@ -16,7 +17,8 @@ PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
 TASK_DIR = Path("tasks")
 SAFE_ROOT: Path = (PROJECT_ROOT / "generated/files").resolve()
 
-MODEL_NAME: str = "qwen3:4b-instruct-2507-q4_K_M"
+#MODEL_NAME: str = "qwen3:4b-instruct-2507-q4_K_M"
+MODEL_NAME: str = "qwen3.5:9b"
 PIPELINE_PHASE: str = "learning"
 
 ANSIBLE_CONTROL_NODE: str = "asbsvr"

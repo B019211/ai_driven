@@ -1,3 +1,5 @@
+# context/infra_reviewer_rules.md
+
 # Infrastructure Review Rules
 
 Review Infrastructure artifacts only.
@@ -12,99 +14,89 @@ Reject blocking problems that prevent validation, deployment or browser validati
 
 ## Blocking Problems
 
-The following are blocking:
+Reject only problems that remain after deterministic
+Infrastructure Contract validation.
 
-- invalid YAML
-- YAML root is not a list of Ansible plays
+Blocking problems may include:
+
+- unsupported Ansible parameter
+- Podman module usage that is incompatible with the project rules
+- destructive actions
+- infrastructure configuration that clearly prevents deployment
+- infrastructure configuration that clearly prevents runtime validation
+- PHP runtime configuration that cannot provide required infrastructure functionality
+- application logic incorrectly included in Infrastructure `src/index.php`
+- security or configuration problems explicitly identified by supplied validation evidence
+
+Do NOT reject the artifact for deterministic structural conditions
+that are already validated by the pipeline.
+
+Do NOT independently reject:
+
 - missing `hosts`
 - missing `hosts: execution`
 - missing `tasks`
-- `tasks` is not a list
-- Podman task exists outside a play
-- Podman task exists outside the `tasks` list
+- invalid task nesting
 - missing Podman pod
 - missing PHP container
 - missing MySQL container
-- invalid fixed image
-- unsupported Ansible parameter
-- Pod state is not `started`
-- container ports are used instead of `podman_pod.publish`
-- `environment` is used instead of `env`
-- Podman is managed by shell/command when a Podman module exists
-- required `index.php` deployment is missing
-- PHP runtime cannot provide `pdo_mysql`
-- Infrastructure `src/index.php` contains application DB logic
-- required inventory entries are missing
+- missing index.php copy task
+- missing inventory entries
+- fixed image values
+- fixed port values
 
-## Required Values
+when those conditions have already been checked by deterministic
+validation.
 
-Pod:
+## Context for Review
 
-- `lamp-pod`
+The following are fixed Infrastructure Contract values already
+validated by the pipeline.
 
-PHP container:
+Use these values only when evaluating a remaining semantic,
+deployment, or runtime issue.
 
-- `php`
+Do not perform independent structural validation of these values.
 
-MySQL container:
-
-- `mysql`
-
-PHP image:
-
-- `php:8.2-apache`
-
-MySQL image:
-
-- `mysql:8.0`
-
-Web root:
-
-- `/var/www/html`
-
-Host web path:
-
-- `/home/vboxuser/containers/html`
-
-Web publish:
-
-- `8080:80`
-
+Pod: lamp-pod
+PHP container: php
+MySQL container: mysql
+PHP image: php:8.2-apache
+MySQL image: mysql:8.0
+Web root: /var/www/html
+Host web path: /home/vboxuser/containers/html
+Web publish: 8080:80
 Inventory:
-
-```ini
 [control]
 asbsvr
 
 [execution]
 rockey8
-```
 
-## Deployment Contract
+## Deployment Context
 
-Infrastructure must provide:
+Web: host port 8080 mapped to container port 80
+Database: mysql:3306
 
-- `db_host`
-- `db_port`
-- `db_name`
-- `db_user`
-- `db_password`
+These values are supplied as deployment context.
 
-to the PHP runtime using environment variables with exactly those names.
+Do not independently reject the artifact because of these values
+when deterministic validation has already confirmed the contract.
 
-The values must match the current Deployment Contract.
+Do not infer application-level configuration requirements from
+the Infrastructure Deployment Contract.
 
 ## Review Decision
 
 If a blocking problem exists:
 
-```json
+```
 "approved": false
 ```
 
 and the corresponding risk must have:
 
-```json
+```
 "severity": "BLOCKING"
 ```
 
@@ -112,7 +104,7 @@ Do not approve a blocking problem as a warning.
 
 If no blocking problem exists:
 
-```json
+```
 "approved": true
 ```
 
@@ -141,3 +133,93 @@ For example:
 - moving existing task definitions under the required `tasks` list
 
 are valid repairs when the validation evidence requires them.
+
+## Evidence-Based Review
+
+Review the actual generated artifact provided to you.
+
+Do not report a violation unless the violation is directly observable
+in the artifact or explicitly supported by the supplied validation evidence.
+
+## Deterministic Validation Boundary
+
+Infrastructure artifact structure is validated separately by the
+pipeline's deterministic Infrastructure Contract validation.
+
+The following structural items are deterministic validation
+responsibilities and must NOT be independently rejected by the
+Reviewer when the supplied artifact facts or parsed artifact show
+that they are valid:
+
+- YAML parseability
+- play list structure
+- hosts
+- tasks
+- required Podman pod structure
+- required PHP container structure
+- required MySQL container structure
+- required index.php copy task
+- required fixed paths, ports, images, container names and values
+
+The Reviewer must use the supplied artifact facts and actual
+generated artifact as evidence.
+
+If a required structural element is explicitly present in the
+artifact, treat it as present.
+
+For example:
+
+hosts:
+
+- execution
+
+means that the play has a hosts value targeting the execution group.
+
+Do NOT report:
+
+- "missing hosts"
+- "missing execution target"
+- "missing tasks"
+- "task outside tasks"
+
+when the corresponding structure is present in the parsed artifact.
+
+Do not reconstruct or reinterpret valid parsed YAML from its visual
+formatting.
+
+Do not infer structural defects from indentation style, key ordering,
+line wrapping, or textual appearance when the parsed YAML structure
+is valid.
+
+Do not invent variables, Jinja expressions, modules, keys, paths,
+ports, containers, or configuration values.
+
+The Reviewer should report only problems that are directly observable
+in the artifact or explicitly supported by supplied validation
+evidence.
+
+If the deterministic validation evidence and the reviewer's
+interpretation disagree, do not invent a blocking structural problem.
+
+Before reporting a missing key, verify that the key is actually absent.
+Do not report a structural violation based solely on the textual
+appearance of YAML.
+
+When necessary, evaluate the parsed YAML structure rather than
+relying on visual indentation or formatting.
+
+Before reporting an invalid Ansible task structure, verify that
+the task is not nested under the play's "tasks:" key.
+
+The following structure is valid and must NOT be reported as a violation:
+
+- name: Example
+  hosts:
+  - execution
+    tasks:
+  - name: Example task
+    ansible.builtin.debug:
+    msg: "example"
+
+Do not infer structural problems from formatting, indentation style,
+or key ordering when the parsed YAML structure is valid.

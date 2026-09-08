@@ -21,6 +21,7 @@ from jsonschema import validate, ValidationError
 from config import (
     BLOCKING_SEVERITIES,
     MAX_RETRY,
+    MAX_REVIEW_SCHEMA_RETRY,
     MAX_VALIDATION_RETRY,
     PROJECT_ROOT,
     TASK_DIR,
@@ -229,7 +230,8 @@ REVIEW_SCHEMA = {
           "maximum": 1
         }
       },
-      "required": ["category", "root_cause", "reason", "confidence"]
+      "required": ["category", "root_cause", "reason", "confidence"],
+      "additionalProperties": False
     }
   },
   "required": ["approved", "summary", "risks", "diagnosis"]
@@ -325,9 +327,21 @@ def regenerate_file_with_context(
     current_file = target.read_text(encoding="utf-8")
 
     errors = context_data.get("errors", [])
-    evidence = context_data.get("evidence", {})
-    diagnosis = context_data.get("diagnosis", {})
-    contract_feedback = context_data.get("contract_feedback", "")
+
+    validation_evidence = context_data.get(
+        "validation_evidence",
+        {},
+    )
+
+    deploy_diagnosis = context_data.get(
+        "deploy_diagnosis",
+        {},
+    )
+
+    contract_feedback = context_data.get(
+        "contract_feedback",
+        "",
+    )
 
     print("===== CONTRACT FEEDBACK =====")
     print(contract_feedback)
@@ -343,51 +357,40 @@ def regenerate_file_with_context(
         separators=(",", ":"),
     )
 
-    diagnosis_text = json.dumps(
-        diagnosis,
+    validation_evidence_text = json.dumps(
+        validation_evidence,
         ensure_ascii=False,
         separators=(",", ":"),
     )
 
-    evidence_text = json.dumps(
-        evidence,
+    deploy_diagnosis_text = json.dumps(
+        deploy_diagnosis,
         ensure_ascii=False,
         separators=(",", ":"),
     )
-
-    # 巨大な実行ログ全体をRepair AIへ渡さない。
-    # Repairに必要なのは現在のファイルと検証結果なので、
-    # evidenceには上限を設ける。
-    MAX_EVIDENCE_CHARS = 6000
-
-    if len(evidence_text) > MAX_EVIDENCE_CHARS:
-        evidence_text = (
-            evidence_text[:MAX_EVIDENCE_CHARS]
-            + "\n...[evidence truncated]..."
-        )
 
     prompt = f"""
-Target file:
+TARGET FILE:
 {path}
 
-Current file:
+MANDATORY REPAIR EVIDENCE:
+{errors_text}
+
+RUNTIME VALIDATION EVIDENCE:
+{validation_evidence_text}
+
+DEPLOY DIAGNOSIS:
+{deploy_diagnosis_text}
+
+CURRENT FILE:
 --- BEGIN CURRENT FILE ---
 {current_file}
 --- END CURRENT FILE ---
 
-Validation errors:
-{errors_text}
-
-Validation evidence:
-{evidence_text}
-
-Diagnosis:
-{diagnosis_text}
-
-Deterministic Contract Feedback:
+DETERMINISTIC CONTRACT FEEDBACK:
 {contract_feedback}
 
-Repair Rules:
+REPAIR RULES:
 {repair_rules}
 
 Repair the target file using the actual validation evidence.
@@ -555,71 +558,54 @@ Return the complete repaired file content.
                 "playbook root must be a YAML list."
             )
 
-        for index, play in enumerate(parsed_yaml):
-            if not isinstance(play, dict):
-                raise RuntimeError(
-                    "Repair produced invalid Ansible Playbook: "
-                    f"play at index {index} must be a mapping."
-                )
+    if not isinstance(parsed_yaml, list):
+        raise RuntimeError(
+            "Repair produced invalid Ansible Playbook: "
+            "playbook root must be a YAML list."
+        )
 
-            if "hosts" not in play:
-                raise RuntimeError(
-                    "Repair produced invalid Ansible Playbook: "
-                    f"play at index {index} is missing 'hosts'."
-                )
-
-            if "tasks" not in play:
-                raise RuntimeError(
-                    "Repair produced invalid Ansible Playbook: "
-                    f"play at index {index} is missing 'tasks'."
-                )
-
-            if not isinstance(play["tasks"], list):
-                raise RuntimeError(
-                    "Repair produced invalid Ansible Playbook: "
-                    f"'tasks' at play index {index} must be a list."
-                )
-
-        # Ansible PlaybookはYAML rootがlistでなければならない。
-        if not isinstance(parsed_yaml, list):
+    for index, play in enumerate(parsed_yaml):
+        if not isinstance(play, dict):
             raise RuntimeError(
                 "Repair produced invalid Ansible Playbook: "
-                "playbook root must be a YAML list."
+                f"play at index {index} must be a mapping."
             )
 
-        # 各playはmappingでなければならない。
-        for index, play in enumerate(parsed_yaml):
-            if not isinstance(play, dict):
-                raise RuntimeError(
-                    "Repair produced invalid Ansible Playbook: "
-                    f"play at index {index} must be a mapping."
-                )
+        if "hosts" not in play:
+            raise RuntimeError(
+                "Repair produced invalid Ansible Playbook: "
+                f"play at index {index} is missing 'hosts'."
+            )
 
-            if "hosts" not in play:
-                raise RuntimeError(
-                    "Repair produced invalid Ansible Playbook: "
-                    f"play at index {index} is missing 'hosts'."
-                )
+        if "tasks" not in play:
+            raise RuntimeError(
+                "Repair produced invalid Ansible Playbook: "
+                f"play at index {index} is missing 'tasks'."
+            )
 
-            if "tasks" not in play:
-                raise RuntimeError(
-                    "Repair produced invalid Ansible Playbook: "
-                    f"play at index {index} is missing 'tasks'."
-                )
-
-            if not isinstance(play["tasks"], list):
-                raise RuntimeError(
-                    "Repair produced invalid Ansible Playbook: "
-                    f"'tasks' at play index {index} must be a list."
-                )
+        if not isinstance(play["tasks"], list):
+            raise RuntimeError(
+                "Repair produced invalid Ansible Playbook: "
+                f"'tasks' at play index {index} must be a list."
+            )
 
     # ---------------------------------------------------------
     # Infrastructure contract validation
     # ---------------------------------------------------------
     if path == "ansible/playbook.yml":
-        validate_infrastructure_playbook_contract(
+        contract_errors = validate_infrastructure_playbook_contract(
             parsed_yaml
         )
+
+        if contract_errors:
+            print("===== REPAIR CONTRACT VALIDATION FAILED =====")
+            for error in contract_errors:
+                print(f"- {error}")
+            raise RuntimeError(
+                "Infrastructure contract violation:\n"
+                + "\n".join(contract_errors)
+            )
+
 
     print("===== REPAIR V2 RESULT =====")
     print(repaired_file)
@@ -715,26 +701,40 @@ def load_task(task_name: str) -> str:
 
     return path.read_text(encoding="utf-8")
 
-def generate_initial_data(context: Dict[str, Any], task_name: str, task: str) -> Tuple[Dict[str, Any], str]:
+def generate_initial_data(
+    context: Dict[str, Any],
+    task_name: str,
+    task: str,
+) -> Tuple[Dict[str, Any], str]:
     print("\n===== GENERATE PROMPT =====")
+
     task_type = Path(task_name).stem
     print(f"Task Type = {task_type}")
 
-    system_prompt = (
-        PROJECT_ROOT / "prompts/architect.txt"
-    ).read_text(encoding="utf-8")
-
     if task_type == "infrastructure":
+        prompt_name = "architect.txt"
+
         generation_target = """
     Generate only this file:
 
     ansible/playbook.yml
     """
-    
-    else:
+
+    elif task_type == "application":
+        prompt_name = "php_engineer.txt"
+
         generation_target = """
     Generate the required application files defined by the Task.
     """
+
+    else:
+        raise ValueError(
+            f"Unsupported generation task type: {task_type}"
+        )
+
+    system_prompt = (
+        PROJECT_ROOT / f"prompts/{prompt_name}"
+    ).read_text(encoding="utf-8")
 
     prompt = f"""
     Task:
@@ -747,7 +747,12 @@ def generate_initial_data(context: Dict[str, Any], task_name: str, task: str) ->
     {context['task_rules']}
 
     Deployment Contract:
-    {json.dumps(context.get("deployment_contract", {}), indent=2, ensure_ascii=False)}
+    {json.dumps(
+        context.get("deployment_contract", {}),
+        indent=2,
+        ensure_ascii=False
+    ) if task_type == "application" else "{}"}
+
 
     Output Format:
     {context['format_rules']}
@@ -764,26 +769,40 @@ def generate_initial_data(context: Dict[str, Any], task_name: str, task: str) ->
     print("SYSTEM PROMPT LENGTH =", len(system_prompt))
     print("USER PROMPT LENGTH =", len(prompt))
     print("MODEL =", MODEL_NAME)
-    # print("MAX TOKENS =", 1024)
-    # print("NUM PREDICT =", 1024)
-    # print("THINK =", False)
 
     try:
         raw_output = ollama_chat(
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
+                {
+                    "role": "system",
+                    "content": system_prompt,
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
             ],
             temperature=0.0,
             num_predict=2048,
             think=False,
         )
+
         ollama_elapsed = time.monotonic() - ollama_start
-        print(f"Ollama returned ({ollama_elapsed:.1f}s)")
+        print(
+            f"Ollama returned ({ollama_elapsed:.1f}s)"
+        )
+
     except Exception as e:
         ollama_elapsed = time.monotonic() - ollama_start
-        print(f"Ollama call failed after {ollama_elapsed:.1f}s")
-        raise RuntimeError(f"Failed to call Ollama: {e}")
+
+        print(
+            f"Ollama call failed after "
+            f"{ollama_elapsed:.1f}s"
+        )
+
+        raise RuntimeError(
+            f"Failed to call Ollama: {e}"
+        )
 
     elapsed = time.time() - start
     print(f"Generate finished ({elapsed:.1f}s)")
@@ -800,57 +819,29 @@ def generate_initial_data(context: Dict[str, Any], task_name: str, task: str) ->
     print("====================")
 
     json_text = extract_json(raw_output)
+
     try:
         data = json.loads(json_text)
+
     except json.JSONDecodeError:
-        print("Initial JSON parse failed. Attempting JSON repair.")
+        print(
+            "Initial JSON parse failed. "
+            "Attempting JSON repair."
+        )
+
         json_text = sanitize_json_string(json_text)
         data = safe_json_loads(json_text)
 
-    # Infrastructure Generate は playbook 本文だけをAIに生成させる。
-    # qwen3 が playbook を直接 JSON オブジェクトとして返した場合は、
-    # pipeline の共通 files 形式へ正規化する。
-    if task_type == "infrastructure":
-        playbook = (
-            data.get("ansible", {})
-            .get("playbook")
-        )
-
-        if isinstance(playbook, dict):
-            data = {
-                "summary": "",
-                "files": [
-                    {
-                        "path": "ansible/playbook.yml",
-                        "content": yaml.safe_dump(
-                            [playbook],
-                            sort_keys=False,
-                            allow_unicode=True,
-                        ),
-                    }
-                ],
-                "commands": [],
-                "risks": [],
-            }
-
-    required_defaults = {
-        "commands": [],
-        "risks": [],
-        "files": [],
-        "summary": "",
-    }
-
-    for key, default in required_defaults.items():
-        data.setdefault(key, default)
-
     # Infrastructure fixed artifacts are assembled by Python.
-    # They are defined explicitly by infra_rules.md and do not require LLM generation.
+    # They are defined explicitly by infra_rules.md and do not
+    # require LLM generation.
     if task_type == "infrastructure":
 
         generated_files = data.get("files", [])
 
         playbook_files = [
-            f for f in generated_files
+            f
+            for f in generated_files
             if f.get("path") == "ansible/playbook.yml"
         ]
 
@@ -872,8 +863,117 @@ def generate_initial_data(context: Dict[str, Any], task_name: str, task: str) ->
             },
         ]
 
+        # ---------------------------------------------------------
+        # Infrastructure Contract validation / repair
+        # Generate直後に決定論的に検査する。
+        # ---------------------------------------------------------
+
+        playbook_content = playbook_files[0]["content"]
+
+        try:
+            parsed_playbook = yaml.safe_load(
+                playbook_content
+            )
+
+        except yaml.YAMLError as e:
+            yaml_error = str(e)
+
+            repaired_files = repair_validation_errors(
+                [
+                    {
+                        "type": "infrastructure_yaml",
+                        "file": "ansible/playbook.yml",
+                        "detail": yaml_error,
+                    }
+                ],
+                yaml_error,
+                "",
+                context["architecture"],
+                context["rules"],
+                context["task_rules"],
+                context["format_rules"],
+                SAFE_ROOT,
+                target_file_override="ansible/playbook.yml",
+                contract_feedback=(
+                    "Infrastructure YAML parse failed:\n"
+                    + yaml_error
+                ),
+            )
+
+            for file_entry in data["files"]:
+                repaired_content = repaired_files.get(
+                    file_entry["path"]
+                )
+
+                if repaired_content is not None:
+                    file_entry["content"] = repaired_content
+
+            # Repair後のPlaybookを再取得して、
+            # 必ずYAMLとして再検証する
+            playbook_content = playbook_files[0]["content"]
+
+            try:
+                parsed_playbook = yaml.safe_load(
+                    playbook_content
+                )
+
+            except yaml.YAMLError as repair_error:
+                raise RuntimeError(
+                    "Infrastructure Repair produced invalid YAML: "
+                    f"{repair_error}"
+                ) from repair_error
+
+        contract_errors = (
+            validate_infrastructure_playbook_contract(
+                parsed_playbook
+            )
+        )
+
+        if contract_errors:
+            repaired_files = repair_validation_errors(
+                [
+                    {
+                        "type": "infrastructure_contract",
+                        "file": "ansible/playbook.yml",
+                        "detail": error,
+                    }
+                    for error in contract_errors
+                ],
+                "",
+                "",
+                context["architecture"],
+                context["rules"],
+                context["task_rules"],
+                context["format_rules"],
+                SAFE_ROOT,
+                target_file_override="ansible/playbook.yml",
+                contract_feedback="\n".join(
+                    contract_errors
+                ),
+            )
+
+            for file_entry in data["files"]:
+                repaired_content = repaired_files.get(
+                    file_entry["path"]
+                )
+
+                if repaired_content is not None:
+                    file_entry["content"] = repaired_content
+
+    # ---------------------------------------------------------
+    # Final generated JSON schema validation
+    # ---------------------------------------------------------
+
+    generation_fixer_prompt = (
+        PROJECT_ROOT / "prompts/generation_fixer.txt"
+    ).read_text(encoding="utf-8")
+
     try:
-        validate(instance=data, schema=OUTPUT_SCHEMA)
+        validate(
+            instance=data,
+            schema=OUTPUT_SCHEMA,
+        )
+
     except ValidationError as e:
         print("\nSchema validation failed")
         print(e)
@@ -885,14 +985,20 @@ Validation error:
 Current generated JSON:
 {json.dumps(data, ensure_ascii=False, indent=2)}
 
-Return JSON only.
-Do not return markdown fences.
+Output Format:
+{context['format_rules']}
 """
 
         repair_raw = ollama_chat(
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": repair_prompt},
+                {
+                    "role": "system",
+                    "content": generation_fixer_prompt,
+                },
+                {
+                    "role": "user",
+                    "content": repair_prompt,
+                },
             ],
             temperature=0.0,
             num_predict=2048,
@@ -900,15 +1006,26 @@ Do not return markdown fences.
         )
 
         if not repair_raw:
-            raise RuntimeError("Schema repair returned empty response.")
+            raise RuntimeError(
+                "Schema repair returned empty response."
+            )
 
         repair_json = extract_json(repair_raw)
-        repair_json = sanitize_json_string(repair_json)
+        repair_json = sanitize_json_string(
+            repair_json
+        )
+
         data = safe_json_loads(repair_json)
-        validate(instance=data, schema=OUTPUT_SCHEMA)
+
+        validate(
+            instance=data,
+            schema=OUTPUT_SCHEMA,
+        )
 
     if not isinstance(data, dict):
-        raise RuntimeError("Generated result must be object")
+        raise RuntimeError(
+            "Generated result must be object"
+        )
 
     return data, raw_output
 
@@ -916,52 +1033,115 @@ Do not return markdown fences.
 # =========================================================
 # Review
 # =========================================================
-
+                
 def review_loop(data: Dict[str, Any], context: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     retry_count = 0
+    schema_retry_count = 0
 
     while True:
         print("\n===== REVIEW =====")
         print(f"Attempt {retry_count + 1}")
 
+        print("\n===== REVIEW INPUT PLAYBOOK =====")
+        for file_entry in data.get("files", []):
+            if file_entry.get("path") == "ansible/playbook.yml":
+                print(file_entry.get("content", ""))
+
+        artifact_facts = ""
+
+        if context.get("task_type") == "infrastructure":
+            playbook_entry = next(
+                (
+                    f
+                    for f in data.get("files", [])
+                    if f.get("path") == "ansible/playbook.yml"
+                ),
+                None,
+            )
+
+            if playbook_entry:
+                try:
+                    parsed_playbook = yaml.safe_load(
+                        playbook_entry.get("content", "")
+                    )
+
+                    facts = ["YAML parse: success",]
+
+                    if isinstance(parsed_playbook, list):
+                        facts.append(
+                            f"Play count: {len(parsed_playbook)}"
+                        )
+
+                        for index, play in enumerate(parsed_playbook):
+                            if not isinstance(play, dict):
+                                facts.append(
+                                    f"Play {index}: invalid play structure"
+                                )
+                                continue
+
+                            facts.append(
+                                f"Play {index} hosts: {play.get('hosts')!r}"
+                            )
+
+                            tasks = play.get("tasks")
+
+                            if isinstance(tasks, list):
+                                facts.append(
+                                    f"Play {index} tasks count: {len(tasks)}"
+                                )
+                                facts.append(
+                                    "Play {} task names: {!r}".format(
+                                        index,
+                                        [
+                                            task.get("name")
+                                            for task in tasks
+                                            if isinstance(task, dict)
+                                        ],
+                                    )
+                                )
+                            else:
+                                facts.append(
+                                    f"Play {index} tasks: {tasks!r}"
+                                )
+
+                    artifact_facts = "\n".join(facts)
+
+                except yaml.YAMLError as e:
+                    artifact_facts = f"YAML parse error: {e}"
+
         review_request = f"""
-Generated JSON:
+        Generated JSON:
 
-{json.dumps(data, ensure_ascii=False)}
+        {json.dumps(data, ensure_ascii=False)}
 
-Project Rules:
-{context['rules']}
+        Artifact Facts:
+        {artifact_facts}
 
-Task Rules:
-{context['task_rules']}
+        Project Rules:
+        {context['rules']}
 
-Review Rules:
-{context['review_rules']}
+        Task Rules:
+        {context['task_rules']}
 
-Task Review Rules:
-{context['task_review_rules']}
+        Review Rules:
+        {context['review_rules']}
 
-Diagnosis confidence:
- - Must be a number between 0 and 1.
- - Do not use percentage values such as 95.
+        Task Review Rules:
+        {context['task_review_rules']}
 
-Before deciding approved, check every Blocking Problem listed in the Task Review Rules against the generated artifact.
-
-If any Blocking Problem is present:
-- approved must be false.
-- risks must include a risk with severity "BLOCKING".
-- diagnosis.root_cause must describe the observed blocking problem.
-
-If no Blocking Problem is present:
-- approved may be true.
-
-Review it.
-Return JSON only.
-"""
+        Review the generated artifact according to the supplied rules.
+        Return JSON only.
+        """
 
         print(f"\n=== REVIEW ATTEMPT {retry_count + 1} ===")
         print("Review request...")
         start = time.time()
+        print("REVIEW SYSTEM PROMPT LENGTH =", len(context["reviewer_prompt"]))
+        print("REVIEW USER PROMPT LENGTH =", len(review_request))
+        print("===== REVIEW SYSTEM PROMPT TAIL =====")
+        print(context["reviewer_prompt"][-3000:])
+        print("=====================================")
+
 
         review_raw = ollama_chat(
             messages=[
@@ -983,31 +1163,226 @@ Return JSON only.
         print("\n=== REVIEW RAW ===")
         print(review_raw)
 
+        print("\n===== REVIEW REQUEST FULL DEBUG =====")
+        print(review_request)
+        print("====================================")
+
+        if "remove_all_files" in review_request:
+            print("!!! remove_all_files FOUND IN REVIEW REQUEST !!!")
+        else:
+            print("remove_all_files NOT FOUND IN REVIEW REQUEST")
+
         review_json = extract_json(review_raw)
         review_json = sanitize_json_string(review_json)
         review_data = safe_json_loads(review_json)
 
+        # try:
+            # # =====================================================
+            # # Optional fields fallback
+            # # =====================================================
+            # review_data.setdefault(
+            #     "approved",
+            #     False,
+            # )
+
+            # review_data.setdefault(
+            #     "summary",
+            #     "Reviewer rejected or approved the generated artifact."
+            # )
+
+            # review_data.setdefault(
+            #     "risks",
+            #     [],
+            # )
+
+            # # =====================================================
+            # # Diagnosis normalization
+            # # =====================================================
+            # # Reviewer may explicitly return diagnosis=null when
+            # # there is no blocking problem. Normalize it before
+            # # schema validation because REVIEW_SCHEMA requires
+            # # diagnosis to be an object.
+            # if review_data.get("diagnosis") is None:
+            #     review_data["diagnosis"] = {
+            #         "category": context.get("task_type", "application"),
+            #         "root_cause": "",
+            #         "reason": "",
+            #         "confidence": 0.0,
+            #     }
+
         try:
-            validate(instance=review_data, schema=REVIEW_SCHEMA)
-            # =====================================================
-            # Diagnosis (optional)
-            # =====================================================
-            review_data.setdefault(
-                "diagnosis",
-                {
-                    "category": "application",
-                    "root_cause": "",
-                    "reason": "",
-                    "confidence": 0.0,
-                },
-            )            
+            validate(
+                instance=review_data,
+                schema=REVIEW_SCHEMA,
+            )
+
         except ValidationError as e:
-            raise RuntimeError(f"Review schema invalid:\n{e}")
+            schema_retry_count += 1
 
+            print("\n===== REVIEW SCHEMA INVALID =====")
+            print(
+                f"Schema retry = "
+                f"{schema_retry_count}/{MAX_REVIEW_SCHEMA_RETRY}"
+            )
+            print(e)
 
+            if schema_retry_count >= MAX_REVIEW_SCHEMA_RETRY:
+                raise RuntimeError(
+                    "Reviewer output schema invalid after maximum retries:\n"
+                    f"{e}"
+                ) from e
 
+            schema_retry_prompt = f"""
+        The previous Reviewer response violated REVIEW_SCHEMA.
 
+        Validation error:
+        {str(e)}
+
+        Previous Reviewer response:
+        {json.dumps(review_data, ensure_ascii=False, indent=2)}
+
+        Review request:
+        {review_request}
+
+        Your previous response was invalid because it did not satisfy
+        the required Reviewer output schema.
+
+        Return a new Review JSON object that satisfies REVIEW_SCHEMA.
+
+        Do not change the generated artifact.
+        Do not perform artifact repair.
+        Do not return explanations.
+        Return JSON only.
+        """
+
+            print("\n===== REVIEW SCHEMA RETRY =====")
+            print("Retrying Reviewer because its output schema was invalid.")
+
+            retry_start = time.time()
+
+            review_raw = ollama_chat(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": context["reviewer_prompt"],
+                    },
+                    {
+                        "role": "user",
+                        "content": schema_retry_prompt,
+                    },
+                ],
+                temperature=0.0,
+                num_predict=2048,
+                think=False,
+            )
+
+            print(
+                f"Review schema retry finished "
+                f"({time.time() - retry_start:.1f}s)"
+            )
+
+            if not review_raw:
+                raise RuntimeError(
+                    "Reviewer schema retry returned empty response."
+                )
+
+            print("\n=== REVIEW SCHEMA RETRY RAW ===")
+            print(review_raw)
+
+            review_json = extract_json(review_raw)
+            review_json = sanitize_json_string(review_json)
+            review_data = safe_json_loads(review_json)
+
+            try:
+                validate(
+                    instance=review_data,
+                    schema=REVIEW_SCHEMA,
+                )
+            except ValidationError as retry_error:
+                raise RuntimeError(
+                    "Reviewer output schema invalid after schema retry:\n"
+                    f"{retry_error}"
+                ) from retry_error
+
+            schema_retry_prompt = f"""
+        The previous Reviewer response violated REVIEW_SCHEMA.
+
+        Validation error:
+        {str(e)}
+
+        Previous Reviewer response:
+        {json.dumps(review_data, ensure_ascii=False, indent=2)}
+
+        Review request:
+        {review_request}
+
+        Your previous response was invalid because it did not satisfy
+        the required Reviewer output schema.
+
+        Return a new Review JSON object that satisfies REVIEW_SCHEMA.
+
+        Do not change the generated artifact.
+        Do not perform artifact repair.
+        Do not return explanations.
+        Return JSON only.
+        """
+
+            print("\n===== REVIEW SCHEMA RETRY =====")
+            print("Retrying Reviewer because its output schema was invalid.")
+
+            retry_start = time.time()
+
+            review_raw = ollama_chat(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": context["reviewer_prompt"],
+                    },
+                    {
+                        "role": "user",
+                        "content": schema_retry_prompt,
+                    },
+                ],
+                temperature=0.0,
+                num_predict=2048,
+                think=False,
+            )
+
+            print(
+                f"Review schema retry finished "
+                f"({time.time() - retry_start:.1f}s)"
+            )
+
+            if not review_raw:
+                raise RuntimeError(
+                    "Reviewer schema retry returned empty response."
+                )
+
+            print("\n=== REVIEW SCHEMA RETRY RAW ===")
+            print(review_raw)
+
+            review_json = extract_json(review_raw)
+            review_json = sanitize_json_string(review_json)
+            review_data = safe_json_loads(review_json)
+
+            try:
+                validate(
+                    instance=review_data,
+                    schema=REVIEW_SCHEMA,
+                )
+            except ValidationError as retry_error:
+                raise RuntimeError(
+                    "Reviewer output schema invalid after schema retry:\n"
+                    f"{retry_error}"
+                ) from retry_error
+
+        # except ValidationError as e:
+        #     raise RuntimeError(f"Review schema invalid:\n{e}")
+
+        approved = review_data.get("approved", False)
         risks = review_data.get("risks", [])
+
+
         blocking = []
         warnings = []
 
@@ -1025,6 +1400,19 @@ Return JSON only.
                 blocking.append(r)
             else:
                 warnings.append(r)
+
+        # Reviewerが明示的にapproved=falseなら必ず失敗扱い
+        if not approved:
+            if not blocking:
+                blocking.append({
+                    "severity": "BLOCKING",
+                    "description": (
+                        review_data.get(
+                            "summary",
+                            "Reviewer rejected the generated artifact."
+                        )
+                    ),
+                })
 
         if not blocking:
             print("\nReview passed")
@@ -1054,16 +1442,35 @@ Return JSON only.
         print("\nBlocking risks found")
 
         fix_prompt = f"""
-Fix this JSON.
+CURRENT GENERATED JSON:
+{json.dumps(data, ensure_ascii=False, indent=2)}
 
-Current JSON:
+BLOCKING REVIEW RISKS:
+{json.dumps(blocking, ensure_ascii=False, indent=2)}
 
-{json.dumps(data, ensure_ascii=False)}
+PROJECT RULES:
+{context["rules"]}
 
-Errors:
+TASK RULES:
+{context["task_rules"]}
 
-{json.dumps(blocking, ensure_ascii=False)}
+FORMAT RULES:
+{context["format_rules"]}
 
+REVIEW RULES:
+{context["review_rules"]}
+
+TASK REVIEW RULES:
+{context["task_review_rules"]}
+
+Repair the current generated JSON only for the supplied blocking review risks.
+
+Preserve all valid existing content.
+Do not change unrelated valid content.
+Do not add unrequested files.
+Do not remove required files.
+
+Return the complete corrected JSON object.
 Return JSON only.
 """
 
@@ -1364,13 +1771,16 @@ def extract_file_content_from_response(content: str) -> str:
 
 def validate_infrastructure_playbook_contract(
     parsed_yaml: Any,
-) -> None:
+) -> List[str]:
     """
     Validate mandatory runtime wiring for ansible/playbook.yml.
 
     These checks protect infrastructure invariants from accidental
     removal by the Repair Agent.
     """
+
+    violations: List[str] = []
+
     required_host_html = "/home/vboxuser/containers/html"
     required_document_root = "/var/www/html"
     required_index_dest = (
@@ -1381,7 +1791,16 @@ def validate_infrastructure_playbook_contract(
     php_volume_found = False
     index_copy_found = False
 
+    if not isinstance(parsed_yaml, list):
+        raise RuntimeError(
+            "Infrastructure contract violation: "
+            "playbook root must be a list."
+        )
+
     for play in parsed_yaml:
+        if not isinstance(play, dict):
+            continue
+
         tasks = play.get("tasks", [])
 
         for task in tasks:
@@ -1414,23 +1833,25 @@ def validate_infrastructure_playbook_contract(
                         continue
 
                     parts = volume.split(":")
-                    if len(parts) < 2:
-                        continue
 
-                    host_path = parts[0]
-                    container_path = parts[1]
+                    if len(parts) >= 2:
+                        host_path = parts[0]
+                        container_path = parts[1]
 
-                    if (
-                        host_path == required_host_html
-                        and container_path == required_document_root
-                    ):
-                        php_volume_found = True
-                        break
+                        if (
+                            host_path == required_host_html
+                            and container_path == required_document_root
+                        ):
+                            php_volume_found = True
+                            break
+
 
             # -----------------------------------------------------
             # index.php must be copied to the host HTML directory
             # -----------------------------------------------------
-            copy_cfg = task.get("copy")
+            copy_cfg = task.get("ansible.builtin.copy")
+            if copy_cfg is None:
+                copy_cfg = task.get("copy")
 
             if isinstance(copy_cfg, dict):
                 src = str(copy_cfg.get("src", ""))
@@ -1459,32 +1880,46 @@ def validate_infrastructure_playbook_contract(
                         )
 
     if not php_container_found:
-        raise RuntimeError(
+        violations.append(
             "Infrastructure contract violation: "
-            "php container was not found."
+            "PHP container was not found."
         )
 
     if not php_volume_found:
-        raise RuntimeError(
+        violations.append(
             "Infrastructure contract violation: "
-            "php container must bind "
+            "PHP container must bind "
             "/home/vboxuser/containers/html "
             "to /var/www/html."
         )
 
     if not index_copy_found:
-        raise RuntimeError(
+        violations.append(
             "Infrastructure contract violation: "
             "index.php must be copied to "
             "/home/vboxuser/containers/html/index.php."
         )
 
+    return violations
 
-def postprocess_regenerated_file_content(content: str, target_file: str) -> str:
-    """Apply extension-specific repair to regenerated file content."""
-    if target_file.endswith((".yml", ".yaml")):
-        return repair_podman_yaml_content(content)
-    return content
+def postprocess_regenerated_file_content(
+    content: str,
+    target_file: str,
+) -> str:
+    """Apply extension-specific deterministic repair to regenerated content."""
+
+    if not target_file.endswith((".yml", ".yaml")):
+        return content
+
+    repaired = repair_podman_yaml_content(content)
+
+    if target_file == "ansible/playbook.yml":
+        repaired = repaired.replace(
+            "src:/home/vboxuser/containers/html:/var/www/html",
+            "/home/vboxuser/containers/html:/var/www/html",
+        )
+
+    return repaired
 
 def discover_php_files(root: Path) -> List[Path]:
     """Discover generated PHP files under SAFE_ROOT/src."""
@@ -1725,10 +2160,12 @@ def repair_validation_errors(
     available_php_files: Optional[List[str]] = None,
     deploy_evidence: Optional[dict] = None,
     deploy_diagnosis=None,
-) -> None:
+    contract_feedback: str = "",
+) -> Dict[str, str]:
 
     # 同一ファイルは1回だけ修正
     target_files = set()
+    repaired_files: Dict[str, str] = {}
 
     for err in validation_errors:
         file_value = err.get("file")
@@ -1772,11 +2209,25 @@ def repair_validation_errors(
         regeneration_context = {
             "source": "validation",
             "errors": validation_errors,
+
+            # Runtime validation の実測結果を Repair V2 に渡す
             "stdout": validation_stdout,
             "stderr": validation_stderr,
+
             "available_php_files": available_php_files or [],
-            "evidence": deploy_evidence,
-            "diagnosis": deploy_diagnosis,
+
+            # Deploy 成功/失敗の情報と Runtime validation の情報を混同しない
+            "deploy_evidence": deploy_evidence or {},
+            "deploy_diagnosis": deploy_diagnosis or {},
+
+            # Browser / PHP lint など、今回の修正対象を決める実測結果
+            "validation_evidence": {
+                "stdout": validation_stdout,
+                "stderr": validation_stderr,
+                "errors": validation_errors,
+            },
+
+            "contract_feedback": contract_feedback,
         }
 
         regenerated = regenerate_file_with_context(
@@ -1806,11 +2257,14 @@ def repair_validation_errors(
             )
 
         safe_write_file(safe_root, target_file, regenerated)
+        repaired_files[target_file] = regenerated
         print("AFTER WRITE")
         print("===== FILE AFTER WRITE =====")
         print((safe_root / target_file).read_text(encoding="utf-8")[:600])
 
         print("Repair completed.")
+
+    return repaired_files
 
 def repair_publish_port(playbook_path):
     text = Path(playbook_path).read_text(encoding="utf-8")
@@ -1955,6 +2409,35 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
 
     data, review_data = review_loop(data, context)
 
+    # =========================================================
+    # Deterministic Infrastructure Contract Validation
+    # =========================================================
+    if context.get("task_type") == "infrastructure":
+        playbook_files = [
+            f
+            for f in data.get("files", [])
+            if f.get("path") == "ansible/playbook.yml"
+        ]
+
+        if len(playbook_files) != 1:
+            raise RuntimeError(
+                "Infrastructure Generate must contain exactly "
+                "one ansible/playbook.yml."
+            )
+
+        playbook_content = playbook_files[0].get("content", "")
+
+        try:
+            parsed_playbook = yaml.safe_load(playbook_content)
+        except yaml.YAMLError as e:
+            raise RuntimeError(
+                f"Generated infrastructure playbook is invalid YAML: {e}"
+            ) from e
+
+        validate_infrastructure_playbook_contract(
+            parsed_playbook
+        )
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_text(PROJECT_ROOT / f"logs/ai_run_{timestamp}.txt", raw_output or "")
     log_text(
@@ -1978,8 +2461,6 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
         static_validation_errors: List[Dict[str, Any]] = []
 
         try:
-            import yaml
-
             if not playbook_file.exists():
                 static_validation_errors.append({
                     "type": "missing_playbook",
@@ -2189,44 +2670,10 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
                     f"USING AI (auto-repair {repair_attempt + 1}/{repair_attempts}) ====="
                 )
 
-                current_contract_feedback = ""
-
-                if repair_attempt > 0:
-                    current_contract_feedback = """
-        Previous repair attempt failed deterministic infrastructure contract validation.
-
-        The repaired playbook MUST satisfy all of these requirements:
-
-        1. PHP container must contain:
-        volumes:
-            - /home/vboxuser/containers/html:/var/www/html
-
-        2. The index.php copy task MUST be:
-        copy:
-            src: ../src/index.php
-            dest: /home/vboxuser/containers/html/index.php
-
-        3. The index.php copy task MUST NOT contain any "when" condition.
-
-        4. MySQL container env MUST be a YAML mapping:
-        env:
-            MYSQL_ROOT_PASSWORD: secret
-
-        Do not remove any existing required volume, port, image,
-        container, pod, or environment configuration.
-
-        Return the complete corrected file.
-        """
-
-                repair_context = dict(regeneration_context)
-
-                if current_contract_feedback:
-                    repair_context["contract_feedback"] = current_contract_feedback
-
                 regenerated = regenerate_file_with_context(
                     repair_target,
                     context["architecture"],
-                    repair_context,
+                    regeneration_context,
                     context["rules"],
                     context["task_rules"],
                     context["format_rules"],
@@ -2611,44 +3058,10 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
                         f"USING AI (auto-repair {repair_attempt + 1}/{repair_attempts}) ====="
                     )
 
-                    current_contract_feedback = ""
-
-                    if repair_attempt > 0:
-                        current_contract_feedback = """
-            Previous repair attempt failed deterministic infrastructure contract validation.
-
-            The repaired playbook MUST satisfy all of these requirements:
-
-            1. PHP container must contain:
-            volumes:
-                - /home/vboxuser/containers/html:/var/www/html
-
-            2. The index.php copy task MUST be:
-            copy:
-                src: ../src/index.php
-                dest: /home/vboxuser/containers/html/index.php
-
-            3. The index.php copy task MUST NOT contain any "when" condition.
-
-            4. MySQL container env MUST be a YAML mapping:
-            env:
-                MYSQL_ROOT_PASSWORD: secret
-
-            Do not remove any existing required volume, port, image,
-            container, pod, or environment configuration.
-
-            Return the complete corrected file.
-            """
-
-                    repair_context = dict(regeneration_context)
-
-                    if current_contract_feedback:
-                        repair_context["contract_feedback"] = current_contract_feedback
-
                     regenerated = regenerate_file_with_context(
                         file_to_repair,
                         context["architecture"],
-                        repair_context,
+                        regeneration_context,
                         context["rules"],
                         context["task_rules"],
                         context["format_rules"],

@@ -1,0 +1,31 @@
+- name: Build LAMP infrastructure
+  hosts:
+  - execution
+  gather_facts: false
+  tasks:
+  - name: Create Lamp Pod
+    containers.podman.podman_pod:
+      state: started
+      name: lamp-pod
+      publish:
+      - 8080:80
+  - name: Deploy PHP Container
+    containers.podman.podman_container:
+      image: php:8.2-apache
+      name: php
+      pod: lamp-pod
+      state: started
+      volumes:
+      - /home/vboxuser/containers/html:/var/www/html:Z
+  - name: Deploy MySQL Container
+    containers.podman.podman_container:
+      image: mysql:8.0
+      name: mysql
+      pod: lamp-pod
+      state: started
+      env:
+        MYSQL_ROOT_PASSWORD: secret
+  - name: Copy index.php to web root
+    ansible.builtin.copy:
+      src: ../src/index.php
+      dest: /home/vboxuser/containers/html/index.php

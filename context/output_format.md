@@ -31,3 +31,19 @@ Source code must be represented as a JSON string.
 Escape characters according to standard JSON syntax.
 
 Do not add explanatory prose, Markdown, or code fences outside the JSON object.
+
+## Repair Output Format
+
+The repair response MUST be exactly one JSON object.
+
+The JSON object MUST contain exactly one key:
+
+"content"
+
+The value of "content" MUST contain the complete repaired target file.
+
+Do not return explanations.
+
+Do not return Markdown.
+
+Do not return Markdown fences.

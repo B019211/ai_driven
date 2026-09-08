@@ -1,3 +1,5 @@
+# context/infra_rules.md
+
 # Infrastructure Rules
 
 ## Scope
@@ -50,6 +52,7 @@ Requirements:
 - Do not create a top-level `plays` key.
 - Do not create a top-level `playbook` key.
 - Do not represent each task as a separate play.
+- Ansible + Podmanを使用する
 
 ---
 
@@ -58,7 +61,10 @@ Requirements:
 Use these Ansible modules:
 
 - `containers.podman.podman_pod`
+
 - `containers.podman.podman_container`
+
+- Docker Composeへ変更しない
 
 Do not invent Podman module parameters.
 
@@ -72,13 +78,13 @@ The web port must be published by the Pod.
 
 The Pod must use:
 
-```yaml
+```
 state: started
 ```
 
 The published port must be:
 
-```yaml
+```
 publish:
   - "8080:80"
 ```
@@ -95,13 +101,13 @@ Do not add a second Podman task later to configure the Pod port.
 
 The PHP and MySQL containers must belong to:
 
-```yaml
+```
 pod: lamp-pod
 ```
 
 Use:
 
-```yaml
+```
 state: started
 ```
 
@@ -115,19 +121,19 @@ Do not define published host ports on the PHP or MySQL containers.
 
 Use the Ansible parameter:
 
-```yaml
+```
 env:
 ```
 
 Do not use:
 
-```yaml
+```
 environment:
 ```
 
 For MySQL, preserve the required environment contract:
 
-```text
+```
 MYSQL_ROOT_PASSWORD=secret
 ```
 
@@ -139,31 +145,31 @@ Do not invent additional database credentials.
 
 Use:
 
-```text
+```
 php:8.2-apache
 ```
 
 The PHP container must serve files from:
 
-```text
+```
 /var/www/html
 ```
 
 The host directory:
 
-```text
+```
 /home/vboxuser/containers/html
 ```
 
 is bind-mounted to:
 
-```text
+```
 /var/www/html
 ```
 
 The generated application file is:
 
-```text
+```
 src/index.php
 ```
 
@@ -175,7 +181,7 @@ Its validation content is the responsibility of the application artifact, not th
 
 The generated project layout is:
 
-```text
+```
 generated/files/
 ├── ansible/
 │   ├── playbook.yml
@@ -188,13 +194,13 @@ generated/files/
 
 Therefore, when Ansible `copy` uses `src` relative to the playbook directory, the source path for `index.php` is:
 
-```text
+```
 ../src/index.php
 ```
 
 Do not use:
 
-```text
+```
 src/index.php
 ```
 
@@ -204,13 +210,13 @@ The `copy` task runs on the execution host, not inside the PHP container.
 
 Therefore the destination must be the host directory that is bind-mounted into the container:
 
-```text
+```
 {{ html_mount }}/index.php
 ```
 
 Do not use the container-only path:
 
-```text
+```
 {{ document_root }}/index.php
 ```
 
@@ -218,7 +224,7 @@ for the Ansible host-side `copy` destination.
 
 The resulting file must become available inside the PHP container at:
 
-```text
+```
 /var/www/html/index.php
 ```
 
@@ -232,13 +238,13 @@ Jinja expressions used as complete YAML scalar values must be written in a YAML-
 
 For example:
 
-```yaml
+```
 name: "{{ pod_name }}"
 ```
 
 Do not generate unquoted Jinja expressions such as:
 
-```yaml
+```
 name: { { pod_name } }
 ```
 
