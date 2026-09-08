@@ -1,0 +1,708 @@
+from typing import Any, Dict, List, Tuple, Optional
+import time
+from config import DEPLOY_ERROR_PATTERNS
+
+from utility import (
+    run_command,
+    run_remote_command,
+)
+from config import (
+    ANSIBLE_CONTROL_NODE,
+    EXECUTION_NODE,
+    REMOTE_PROJECT_ROOT,
+)
+
+# =========================================================
+# Deploy
+# =========================================================
+
+def deploy_pipeline() -> Dict[str, Any]:
+    print()
+    print("===== DEPLOY =====")
+
+    remote_cmd = (
+        f"cd {REMOTE_PROJECT_ROOT} && "
+        "ansible-playbook "
+        "-i ansible/inventory.ini "
+        "ansible/playbook.yml"
+    )
+
+    code, stdout, stderr = run_remote_command(ANSIBLE_CONTROL_NODE, remote_cmd)
+    stdout = stdout or ""
+    stderr = stderr or ""
+    
+    print(stdout)
+    if stderr:
+        print(stderr)
+    print("Return code =", code)
+
+    return {"success": code == 0, "stdout": stdout, "stderr": stderr}
+
+# =========================================================
+# Deploy Error Analysis
+# =========================================================
+
+def analyze_deploy_error(
+    result: Dict[str, Any],
+    evidence: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Deploy結果+解析証跡を解析し、Repair Planner向けの診断情報を返す。
+
+    Parameters
+    ----------
+    result:
+        deploy_pipeline() の戻り値
+
+    Returns
+    -------
+    dict
+        {
+            "category": "...",
+            "root_cause": "...",
+            "reason": "...",
+            "confidence": 0.99,
+            "repair_hint": "..."
+        }
+    """
+
+    # -------------------------
+    # 成功でも実機確認する
+    # -------------------------
+
+    ps_output = evidence.get(
+        "podman_ps_pod",
+        {}
+    ).get(
+        "stdout",
+        ""
+    )
+
+    pod_output = evidence.get(
+        "podman_pod_ps",
+        {}
+    ).get(
+        "stdout",
+        ""
+    )
+
+    # -------------------------
+    # 既存ロジック
+    # -------------------------
+
+    stderr = result.get("stderr") or ""
+    stderr_lower = stderr.lower()
+
+    if (
+        "rootlessport cannot expose privileged port 80"
+        in stderr_lower
+    ):
+        return {
+            "category": "environment",
+            "root_cause": "rootless_privileged_port",
+            "reason": stderr,
+            "confidence": 0.99,
+            "repair_hint": "Use port >=1024.",
+            "repair_target": "ansible/playbook.yml",
+        }
+
+    if "unsupported parameters" in stderr_lower:
+        return {
+            "category": "ansible",
+            "root_cause": "unsupported_module_parameter",
+            "reason": stderr,
+            "confidence": 0.99,
+            "repair_hint": (
+                "Remove unsupported module parameters "
+                "from playbook.yml."
+            ),
+            "repair_target": "ansible/playbook.yml",
+        }
+
+    if "missing required arguments" in stderr_lower:
+        return {
+            "category": "ansible",
+            "root_cause": "missing_required_argument",
+            "reason": stderr,
+            "confidence": 0.99,
+            "repair_hint": (
+                "Add required module arguments."
+            ),
+            "repair_target": "ansible/playbook.yml",
+        }
+
+    for pattern, diagnosis in DEPLOY_ERROR_PATTERNS.items():
+        if pattern.lower() in stderr_lower:
+            return diagnosis.copy()
+
+    if result.get("returncode", 0) != 0:
+        return {
+            "category": "deployment",
+            "root_cause": "ansible_playbook_failed",
+            "reason": stderr,
+            "confidence": 0.8,
+            "repair_hint": (
+                "Check ansible/playbook.yml and "
+                "podman logs for details."
+            ),
+            "repair_target": "ansible/playbook.yml",
+        }
+
+    # -------------------------
+    # phpコンテナ存在チェック
+    # -------------------------
+
+    if "php" not in ps_output:
+
+        return {
+            "category": "container",
+            "root_cause": "php_container_missing",
+            "reason": (
+                "lamp-pod exists but php container "
+                "was not created."
+            ),
+            "confidence": 0.95,
+            "repair_hint": (
+                "Review podman_container task "
+                "for php in ansible/playbook.yml."
+            ),
+            "repair_target": "ansible/playbook.yml",
+        }
+
+    # -------------------------
+    # mysql存在チェック
+    # -------------------------
+
+    if "mysql" not in ps_output:
+
+        return {
+            "category": "database",
+            "root_cause": "mysql_container_missing",
+            "reason": (
+                "mysql container was not created."
+            ),
+            "confidence": 0.95,
+            "repair_hint": (
+                "Review mysql podman_container task."
+            ),
+            "repair_target": "ansible/playbook.yml",
+        }
+
+    # -------------------------
+    # curl結果確認
+    # -------------------------
+
+    curl_stderr = evidence.get(
+        "curl",
+        {}
+    ).get(
+        "stderr",
+        ""
+    )
+
+    if curl_stderr.strip():
+
+        return {
+            "category": "network",
+            "root_cause": "browser_connection_error",
+            "reason": curl_stderr,
+            "confidence": 0.8,
+            "repair_hint": (
+                "Check apache container, "
+                "pod publish and volume mount."
+            ),
+            "repair_target": "ansible/playbook.yml",
+        }
+
+    curl_stdout = evidence.get(
+        "curl",
+        {}
+    ).get(
+        "stdout",
+        ""
+    )
+
+    if "PHP Version" in curl_stdout:
+
+        return {
+            "category": "deployment",
+            "root_cause": "none",
+            "reason": "Browser validation succeeded.",
+            "confidence": 0.99,
+            "repair_hint": "",
+            "repair_target": "",
+        }
+
+def check_pod_state() -> dict:
+    """Deploy後のPod/Container状態を確認する。"""
+
+    print("\n===== POD STATE CHECK =====")
+
+    pod_result = run_remote_command(
+        EXECUTION_NODE,
+        "podman pod ps --filter name=lamp-pod"
+    )
+
+    container_result = run_remote_command(
+        EXECUTION_NODE,
+        "podman ps -a --filter name=php --filter name=mysql"
+    )
+
+    pod_output = (
+        pod_result.get("stdout", "")
+        if isinstance(pod_result, dict)
+        else str(pod_result)
+    )
+
+    container_output = (
+        container_result.get("stdout", "")
+        if isinstance(container_result, dict)
+        else str(container_result)
+    )
+
+    print(pod_output)
+    print(container_output)
+
+    pod_running = False
+    php_running = False
+    mysql_running = False
+
+    for line in pod_output.splitlines():
+        if "lamp-pod" in line and "Running" in line:
+            pod_running = True
+            break
+
+    for line in container_output.splitlines():
+        if "php" in line and "Up" in line:
+            php_running = True
+
+        if "mysql" in line and "Up" in line:
+            mysql_running = True
+
+    return {
+        "pod_running": pod_running,
+        "php_running": php_running,
+        "mysql_running": mysql_running,
+        "pod_stdout": pod_output,
+        "container_stdout": container_output,
+    }
+
+
+def run_browser_validation() -> Dict[str, Any]:
+    """デプロイ後のブラウザ検証を実行する。"""
+
+    url = "http://192.168.122.10:8080"
+
+    max_attempts = 10
+    retry_interval = 2
+
+    code = 1
+    stdout = ""
+    stderr = ""
+
+    for attempt in range(1, max_attempts + 1):
+        print(
+            f"Browser validation request "
+            f"(attempt {attempt}/{max_attempts})"
+        )
+
+        pod_state = check_pod_state()
+
+        if not pod_state.get("php_running", False):
+            print(
+                "PHP container is not running. "
+                "Waiting before HTTP validation..."
+            )
+            time.sleep(2)
+            continue
+
+        code, stdout, stderr = run_command(
+            ["curl", "-sS", "-D", "-", url]
+        )
+
+        stdout = stdout or ""
+        stderr = stderr or ""
+
+        if code == 0:
+            break
+
+        if attempt < max_attempts:
+            print(
+                "HTTP service is not ready. "
+                f"Retrying in {retry_interval} seconds..."
+            )
+            time.sleep(retry_interval)
+
+    headers_text = stdout
+    body_text = ""
+
+    for separator in ("\r\n\r\n", "\n\n"):
+        if separator in stdout:
+            headers_text, body_text = stdout.split(separator, 1)
+            break
+
+    header_lines = [
+        line for line in headers_text.splitlines()
+        if line
+    ]
+
+    status_line = header_lines[0] if header_lines else ""
+
+    status_code = 0
+    if code != 0:
+        success = False
+    elif status_code == 0:
+        success = False
+    elif status_code >= 400:
+        success = False
+
+    if status_line.startswith("HTTP/"):
+        status_code = int(status_line.split()[1])
+
+    headers: Dict[str, str] = {}
+
+    for line in header_lines[1:]:
+        if ":" in line:
+            name, value = line.split(":", 1)
+            headers[name.strip()] = value.strip()
+
+    if code != 0:
+        success = False
+    elif status_code >= 400:
+        success = False
+    elif "connection failed" in body_text.lower():
+        success = False
+    elif "fatal error" in body_text.lower():
+        success = False
+    elif "parse error" in body_text.lower():
+        success = False
+    else:
+        success = True
+
+    return {
+        "success": success,
+        "status": status_code,
+        "body": body_text,
+        "headers": headers,
+        "stdout": stdout,
+        "stderr": stderr,
+    }
+
+
+def run_php_lint() -> Dict[str, Any]:
+    """デプロイされたPHPファイルの構文チェックを実行する。"""
+
+    remote_cmd = (
+        "podman exec php php -l /var/www/html/index.php"
+    )
+
+    code, stdout, stderr = run_remote_command(
+        EXECUTION_NODE,
+        remote_cmd,
+    )
+
+    return {
+        "success": code == 0,
+        "exit_code": code,
+        "stdout": stdout or "",
+        "stderr": stderr or "",
+    }
+
+def collect_deploy_evidence():
+
+    evidence = {}
+
+    commands = {
+        "podman_ps":
+            "podman ps -a",
+
+        "podman_ps_pod":
+            "podman ps -a --pod",
+
+        "podman_pod_ps":
+            "podman pod ps",
+
+        "php_logs":
+            "podman logs php",
+
+        "mysql_logs":
+            "podman logs mysql",
+
+        "pod_inspect":
+            "podman inspect lamp-pod",
+
+        "curl":
+            "curl -i -sS http://localhost:8080"
+    }
+
+    for key, cmd in commands.items():
+
+        code, stdout, stderr = run_remote_command(
+            EXECUTION_NODE,
+            cmd
+        )
+
+        print(
+            f"\n=== EXECUTION_NODE {key} ==="
+        )
+
+        print(stdout)
+
+        if stderr:
+            print(stderr)
+
+        evidence[key] = {
+            "returncode": code,
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+
+    code, stdout, stderr = run_remote_command(
+        EXECUTION_NODE,
+        "ls -l /home/vboxuser/containers/html"
+    )
+
+    print("\n=== HOST HTML ===")
+    print(stdout)
+
+    evidence["host_html"]={
+        "returncode":code,
+        "stdout":stdout,
+        "stderr":stderr,
+    }
+
+    code, stdout, stderr = run_remote_command(
+        EXECUTION_NODE,
+        "podman exec php sh -c 'head -20 /var/www/html/index.php'"
+    )
+
+    print("\n=== CONTAINER index.php ===")
+    print(stdout)
+
+    evidence["container_php"]={
+        "returncode":code,
+        "stdout":stdout,
+        "stderr":stderr,
+    }
+
+    return evidence
+
+def analyze_deploy_result(result: dict, evidence: dict) -> dict:
+    """
+    Deploy後の各種ログから原因を診断する。
+
+    Parameters
+    ----------
+    result : dict
+        deploy_pipeline() の戻り値
+    evidence : dict
+        collect_deploy_evidence() の戻り値
+
+    Returns
+    -------
+    dict
+    """
+
+    diagnosis = {
+        "category": "deployment",
+        "root_cause": "unknown",
+        "reason": "",
+        "confidence": 0.3,
+        "repair_target": "ansible/playbook.yml",
+        "evidence": evidence
+    }
+
+    # -------------------------------
+    # Deploy自体が失敗
+    # -------------------------------
+
+    if not result.get("success", False):
+
+        stderr = result.get("stderr", "")
+
+        if "rootlessport" in stderr:
+            diagnosis.update({
+                "root_cause": "pod_publish_error",
+                "reason": "Rootless Podman cannot expose privileged ports.",
+                "confidence": 0.99,
+                "repair_target": "ansible/playbook.yml",
+                "evidence": evidence
+            })
+            return diagnosis
+
+        if "permission denied" in stderr:
+            diagnosis.update({
+                "root_cause": "permission_error",
+                "reason": stderr,
+                "confidence": 0.95,
+                "repair_target": "ansible/playbook.yml",
+                "evidence": evidence
+            })
+            return diagnosis
+
+    # -------------------------------
+    # 各種ログ
+    # -------------------------------
+
+    podman_ps = evidence.get("podman_ps", {}).get("stdout", "")
+    podman_pod_ps = evidence.get("podman_pod_ps", {}).get("stdout", "")
+    php_logs = evidence.get("php_logs", {}).get("stdout", "")
+    mysql_logs = evidence.get("mysql_logs", {}).get("stdout", "")
+    pod_inspect = evidence.get("pod_inspect", {}).get("stdout", "")
+
+    curl_stdout = evidence.get("curl", {}).get("stdout", "")
+    curl_stderr = evidence.get("curl", {}).get("stderr", "")
+
+    # -------------------------------
+    # phpコンテナが無い
+    # -------------------------------
+
+    if "php" not in podman_ps:
+
+        diagnosis.update({
+            "root_cause": "container_not_running",
+            "reason": "PHP container does not exist.",
+            "confidence": 0.99,
+            "repair_target": "ansible/playbook.yml",
+            "evidence": evidence
+        })
+
+        return diagnosis
+
+    # -------------------------------
+    # mysqlコンテナが無い
+    # -------------------------------
+
+    if "mysql" not in podman_ps:
+
+        diagnosis.update({
+            "root_cause": "mysql_not_running",
+            "reason": "MySQL container does not exist.",
+            "confidence": 0.99,
+            "repair_target": "ansible/playbook.yml",
+            "evidence": evidence
+        })
+
+        return diagnosis
+
+    # -------------------------------
+    # Podが落ちている
+    # -------------------------------
+
+    if "Exited" in pod_inspect:
+
+        diagnosis.update({
+            "root_cause": "container_crashed",
+            "reason": "Container exited immediately.",
+            "confidence": 0.95,
+            "repair_target": "ansible/playbook.yml",
+            "evidence": evidence
+        })
+
+        return diagnosis
+
+    # -------------------------------
+    # Apache起動失敗
+    # -------------------------------
+
+    if "Recv failure" in curl_stderr:
+
+        diagnosis.update({
+            "root_cause": "apache_not_started",
+            "reason": curl_stderr.strip(),
+            "confidence": 0.90,
+            "repair_target": "ansible/playbook.yml",
+            "evidence": evidence
+        })
+
+        return diagnosis
+
+    # -------------------------------
+    # HTTPエラー
+    # -------------------------------
+
+    if "404" in curl_stdout:
+
+        diagnosis.update({
+            "root_cause": "php_file_missing",
+            "reason": "index.php not found.",
+            "confidence": 0.90,
+            "repair_target": "src/index.php",
+            "evidence": evidence
+        })
+
+        return diagnosis
+
+    if "500" in curl_stdout:
+
+        diagnosis.update({
+            "root_cause": "php_runtime_error",
+            "reason": "PHP Internal Server Error.",
+            "confidence": 0.90,
+            "repair_target": "src/index.php",
+            "evidence": evidence
+        })
+
+        return diagnosis
+
+    # -------------------------------
+    # MySQL接続失敗
+    # -------------------------------
+
+    mysql_text = mysql_logs.lower()
+
+    if "access denied" in mysql_text:
+
+        diagnosis.update({
+            "root_cause": "mysql_auth_failed",
+            "reason": mysql_logs.strip(),
+            "confidence": 0.98,
+            "repair_target": "ansible/playbook.yml",
+            "evidence": evidence
+        })
+
+        return diagnosis
+
+    if "can't connect" in mysql_text:
+
+        diagnosis.update({
+            "root_cause": "mysql_connection_failed",
+            "reason": mysql_logs.strip(),
+            "confidence": 0.95,
+            "repair_target": "ansible/playbook.yml",
+            "evidence": evidence
+        })
+
+        return diagnosis
+
+    # -------------------------------
+    # phpログ
+    # -------------------------------
+
+    php_text = php_logs.lower()
+
+    if "fatal error" in php_text:
+
+        diagnosis.update({
+            "root_cause": "php_fatal_error",
+            "reason": php_logs.strip(),
+            "confidence": 0.98,
+            "repair_target": "src/index.php",
+            "evidence": evidence
+        })
+
+        return diagnosis
+
+    # -------------------------------
+    # 正常
+    # -------------------------------
+
+    if result.get("success"):
+
+        diagnosis.update({
+            "root_cause": "success",
+            "reason": "Deploy and runtime checks look healthy.",
+            "confidence": 1.0,
+        })
+
+    return diagnosis

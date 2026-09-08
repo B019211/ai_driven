@@ -1,23 +1,49 @@
 # AI Output Format
 
-AI must return JSON only.
+Return exactly one valid JSON object.
 
-Required fields
+The top-level object must contain exactly these keys:
 
-summary
+- summary
+- files
+- commands
+- risks
 
-files
-
-commands
-
-risks
-
-files is an array.
-
-Each item contains
+Each files item must contain exactly these keys:
 
 - path
 - content
 
-Do not omit any file.
-Do not generate additional files.
+Do not use ansible, src, or inventory as top-level keys.
+
+Paths must be relative to SAFE_ROOT.
+
+Do not include:
+
+- generated/
+- absolute Windows paths
+- absolute Linux paths
+
+The complete response must be parseable by Python `json.loads()`.
+
+Source code must be represented as a JSON string.
+
+Escape characters according to standard JSON syntax.
+
+Do not add explanatory prose, Markdown, or code fences outside the JSON object.
+
+## Repair Output Format
+
+The repair response MUST be exactly one JSON object.
+
+The JSON object MUST contain exactly one key:
+
+"content"
+
+The value of "content" MUST contain the complete repaired target file.
+
+Do not return explanations.
+
+Do not return Markdown.
+
+Do not return Markdown fences.
