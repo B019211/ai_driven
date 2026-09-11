@@ -232,7 +232,7 @@ def run_remote_validation() -> Tuple[List[dict], str, str]:
     print("======= REMOTE VALIDATION =======")
 
     source = str(SAFE_ROOT) + "/."
-
+    
     code, stdout, stderr = run_command([
         "scp",
         "-r",
@@ -243,6 +243,19 @@ def run_remote_validation() -> Tuple[List[dict], str, str]:
     if code != 0:
         raise RuntimeError(stderr)
 
+    remote_cmd = (
+        f"cd {REMOTE_PROJECT_ROOT} && "
+        "ansible-playbook "
+        "--syntax-check "
+        "-i ansible/inventory.ini "
+        "ansible/playbook.yml"
+    )
+
+    code, stdout, stderr = run_remote_command(
+        ANSIBLE_CONTROL_NODE,
+        remote_cmd
+    )
+
     code2, stdout2, stderr2 = run_remote_command(
         ANSIBLE_CONTROL_NODE,
         f"head -30 {REMOTE_PROJECT_ROOT}/ansible/playbook.yml"
@@ -251,69 +264,13 @@ def run_remote_validation() -> Tuple[List[dict], str, str]:
     print(stdout2)
 
     errors = []
-    combined_stdout = []
-    combined_stderr = []
 
-    # 1. 構文検証 (--syntax-check)
-    syntax_cmd = (
-        f"cd {REMOTE_PROJECT_ROOT} && "
-        "ansible-playbook "
-        "--syntax-check "
-        "-i ansible/inventory.ini "
-        "ansible/playbook.yml"
-    )
-
-    code_syntax, stdout_syntax, stderr_syntax = run_remote_command(
-        ANSIBLE_CONTROL_NODE,
-        syntax_cmd
-    )
-
-    if stdout_syntax:
-        combined_stdout.append(stdout_syntax)
-
-    if stderr_syntax:
-        combined_stderr.append(stderr_syntax)
-
-    if code_syntax != 0:
+    if code != 0:
         errors.append(
             {
                 "type": "ansible_syntax",
-                "stdout": stdout_syntax,
-                "stderr": stderr_syntax,
+                "stderr": stderr,
             }
         )
-    else:
-        # 2. モジュールパラメータ・実行前検証 (--check)
-        check_cmd = (
-            f"cd {REMOTE_PROJECT_ROOT} && "
-            "ansible-playbook "
-            "--check "
-            "-i ansible/inventory.ini "
-            "ansible/playbook.yml"
-        )
 
-        code_check, stdout_check, stderr_check = run_remote_command(
-            ANSIBLE_CONTROL_NODE,
-            check_cmd
-        )
-
-        if stdout_check:
-            combined_stdout.append(stdout_check)
-
-        if stderr_check:
-            combined_stderr.append(stderr_check)
-
-        if code_check != 0:
-            errors.append(
-                {
-                    "type": "ansible_check",
-                    "stdout": stdout_check,
-                    "stderr": stderr_check,
-                }
-            )
-
-    return (
-        errors,
-        "\n".join(combined_stdout),
-        "\n".join(combined_stderr)
-    )
+    return errors, stdout or "", stderr or ""

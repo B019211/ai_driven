@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_pipeline
 
+print(f"AI_PIPELINE_MODULE = {ai_pipeline.__file__}")
 
 def main() -> None:
     # context = ai_pipeline.load_context()
@@ -30,6 +31,8 @@ def main() -> None:
     print(f"\n===== RUN TASK: {task_name} =====")
 
     context = ai_pipeline.load_context(task_type)
+
+    context.setdefault("deployment_contract", {})
     
     context["deployment_contract"].update({
         "web_url": "http://192.168.122.10:8080",

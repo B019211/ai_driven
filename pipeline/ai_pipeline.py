@@ -343,60 +343,113 @@ def regenerate_file_with_context(
         "",
     )
 
+    deployment_contract = context_data.get(
+        "deployment_contract", {}, 
+    )
+
     print("===== CONTRACT FEEDBACK =====")
     print(contract_feedback)
     print("=============================")
 
+    print("===== DEPLOYMENT CONTRACT =====")
+    print(json.dumps(
+        deployment_contract,
+        ensure_ascii=False, indent=2,
+    ))
+    print("===============================")
+
+
     # =========================================================
     # Repair AIへ渡す情報を最小化する
     # =========================================================
-
     errors_text = json.dumps(
         errors,
         ensure_ascii=False,
         separators=(",", ":"),
     )
 
-    validation_evidence_text = json.dumps(
-        validation_evidence,
+    contract_text = json.dumps(
+        deployment_contract,
         ensure_ascii=False,
         separators=(",", ":"),
     )
 
-    deploy_diagnosis_text = json.dumps(
-        deploy_diagnosis,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    if contract_feedback:
+        # Infrastructure Contract Repair:
+        # 決定論的Contract違反と現在ファイルを中心に修復する。
+        prompt = f"""
+    TARGET FILE:
+    {path}
 
-    prompt = f"""
-TARGET FILE:
-{path}
+    CONTRACT VIOLATIONS:
+    {contract_feedback}
 
-MANDATORY REPAIR EVIDENCE:
-{errors_text}
+    DEPLOYMENT CONTRACT:
+    {contract_text}
 
-RUNTIME VALIDATION EVIDENCE:
-{validation_evidence_text}
+    CURRENT FILE:
+    --- BEGIN CURRENT FILE ---
+    {current_file}
+    --- END CURRENT FILE ---
 
-DEPLOY DIAGNOSIS:
-{deploy_diagnosis_text}
+    REPAIR RULES:
+    {repair_rules}
 
-CURRENT FILE:
---- BEGIN CURRENT FILE ---
-{current_file}
---- END CURRENT FILE ---
+    Repair ONLY the reported contract violations.
+    Preserve all valid existing structure and content.
+    Do not redesign the file.
+    Do not add unrelated resources.
+    Do not change values that are not required by the reported violations.
 
-DETERMINISTIC CONTRACT FEEDBACK:
-{contract_feedback}
+    Return the complete repaired file content.
+    """
 
-REPAIR RULES:
-{repair_rules}
+    else:
+        # Runtime / deployment repair:
+        # 実測結果と診断をRepair AIへ渡す。
+        validation_evidence_text = json.dumps(
+            validation_evidence,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
 
-Repair the target file using the actual validation evidence.
+        deploy_diagnosis_text = json.dumps(
+            deploy_diagnosis,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
 
-Return the complete repaired file content.
-"""
+        prompt = f"""
+    TARGET FILE:
+    {path}
+
+    REPAIR EVIDENCE:
+    {errors_text}
+
+    RUNTIME VALIDATION EVIDENCE:
+    {validation_evidence_text}
+
+    DEPLOY DIAGNOSIS:
+    {deploy_diagnosis_text}
+
+    DEPLOYMENT CONTRACT:
+    {contract_text}
+
+    CURRENT FILE:
+    --- BEGIN CURRENT FILE ---
+    {current_file}
+    --- END CURRENT FILE ---
+
+    REPAIR RULES:
+    {repair_rules}
+
+    Repair ONLY the reported problem.
+    Preserve all valid existing structure and content.
+    Do not redesign the file.
+    Do not add unrelated resources.
+
+    Return the complete repaired file content.
+    """
 
 
     print(f"Repair prompt length = {len(prompt):,} chars")
@@ -504,9 +557,9 @@ Return the complete repaired file content.
         )
 
     if repaired_file == current_file:
-        raise RuntimeError(
-            "Repair produced no file change."
-        )
+        print("Repair produced no file change.")
+        return current_file
+
 
 
     # =========================================================
@@ -514,8 +567,6 @@ Return the complete repaired file content.
     # =========================================================
 
     if path.endswith((".yml", ".yaml")):
-        import yaml
-
         try:
             repaired_file = postprocess_regenerated_file_content(
                 repaired_file,
@@ -528,8 +579,8 @@ Return the complete repaired file content.
             ) from e
 
         # Ansible playbook の root は必ず list。
-        # LLM が hosts/vars/tasks の単一 play を mapping として
-        # 返した場合は、決定論的に1 playへ正規化する。
+        # LLM が単一 play を mapping として返した場合は
+        # 決定論的に1 playへ正規化する。
         if (
             path == "ansible/playbook.yml"
             and isinstance(parsed_yaml, dict)
@@ -558,54 +609,52 @@ Return the complete repaired file content.
                 "playbook root must be a YAML list."
             )
 
-    if not isinstance(parsed_yaml, list):
-        raise RuntimeError(
-            "Repair produced invalid Ansible Playbook: "
-            "playbook root must be a YAML list."
-        )
+        # Ansible playbook structure validation
+        if path == "ansible/playbook.yml":
 
-    for index, play in enumerate(parsed_yaml):
-        if not isinstance(play, dict):
-            raise RuntimeError(
-                "Repair produced invalid Ansible Playbook: "
-                f"play at index {index} must be a mapping."
+            for index, play in enumerate(parsed_yaml):
+
+                if not isinstance(play, dict):
+                    raise RuntimeError(
+                        "Repair produced invalid Ansible Playbook: "
+                        f"play at index {index} must be a mapping."
+                    )
+
+                if "hosts" not in play:
+                    raise RuntimeError(
+                        "Repair produced invalid Ansible Playbook: "
+                        f"play at index {index} is missing 'hosts'."
+                    )
+
+                if "tasks" not in play:
+                    raise RuntimeError(
+                        "Repair produced invalid Ansible Playbook: "
+                        f"play at index {index} is missing 'tasks'."
+                    )
+
+                if not isinstance(play["tasks"], list):
+                    raise RuntimeError(
+                        "Repair produced invalid Ansible Playbook: "
+                        f"'tasks' at play index {index} must be a list."
+                    )
+
+            # Infrastructure contract validation
+            contract_errors = validate_infrastructure_playbook_contract(
+                parsed_yaml
             )
 
-        if "hosts" not in play:
-            raise RuntimeError(
-                "Repair produced invalid Ansible Playbook: "
-                f"play at index {index} is missing 'hosts'."
-            )
+            if contract_errors:
+                print(
+                    "===== REPAIR CONTRACT VALIDATION FAILED ====="
+                )
 
-        if "tasks" not in play:
-            raise RuntimeError(
-                "Repair produced invalid Ansible Playbook: "
-                f"play at index {index} is missing 'tasks'."
-            )
+                for error in contract_errors:
+                    print(f"- {error}")
 
-        if not isinstance(play["tasks"], list):
-            raise RuntimeError(
-                "Repair produced invalid Ansible Playbook: "
-                f"'tasks' at play index {index} must be a list."
-            )
-
-    # ---------------------------------------------------------
-    # Infrastructure contract validation
-    # ---------------------------------------------------------
-    if path == "ansible/playbook.yml":
-        contract_errors = validate_infrastructure_playbook_contract(
-            parsed_yaml
-        )
-
-        if contract_errors:
-            print("===== REPAIR CONTRACT VALIDATION FAILED =====")
-            for error in contract_errors:
-                print(f"- {error}")
-            raise RuntimeError(
-                "Infrastructure contract violation:\n"
-                + "\n".join(contract_errors)
-            )
-
+                raise RuntimeError(
+                    "Infrastructure contract violation:\n"
+                    + "\n".join(contract_errors)
+                )
 
     print("===== REPAIR V2 RESULT =====")
     print(repaired_file)
@@ -672,7 +721,14 @@ def load_context(
     else:
         raise ValueError(f"Unsupported task type: {task_type}")
 
-    deployment_contract = {}
+    deployment_contract = {
+        "web_url": "http://192.168.122.10:8080",
+        "db_host": "mysql",
+        "db_port": 3306,
+        "db_name": "testdb",
+        "db_user": "root",
+        "db_password": "secret",
+    }
 
     if previous_context:
         deployment_contract.update(
@@ -712,7 +768,9 @@ def generate_initial_data(
     print(f"Task Type = {task_type}")
 
     if task_type == "infrastructure":
-        prompt_name = "architect.txt"
+        system_prompt_path = (
+            PROJECT_ROOT / "context/infra_generation_rules.md"
+        )
 
         generation_target = """
     Generate only this file:
@@ -721,7 +779,9 @@ def generate_initial_data(
     """
 
     elif task_type == "application":
-        prompt_name = "php_engineer.txt"
+        system_prompt_path = (
+            PROJECT_ROOT / "prompts/php_engineer.txt"
+        )
 
         generation_target = """
     Generate the required application files defined by the Task.
@@ -732,31 +792,35 @@ def generate_initial_data(
             f"Unsupported generation task type: {task_type}"
         )
 
-    system_prompt = (
-        PROJECT_ROOT / f"prompts/{prompt_name}"
-    ).read_text(encoding="utf-8")
+    system_prompt = system_prompt_path.read_text(encoding="utf-8")
 
     prompt = f"""
-    Task:
-    {task}
+        Task:
+        {task}
 
-    Generation target:
-    {generation_target}
+        Generation target:
+        {generation_target}
 
-    Task Rules:
-    {context['task_rules']}
+        Task Rules:
+        {context['task_rules']}
 
-    Deployment Contract:
-    {json.dumps(
+        Generation Rules:
+        {context['rules']}
+
+        Deployment Contract:
+        {json.dumps(context.get("deployment_contract", {}), indent=2)}
+
+        Output Format:
+        {context['format_rules']}
+    """
+
+    print("Deployment Contract:")
+    print(json.dumps(
         context.get("deployment_contract", {}),
         indent=2,
         ensure_ascii=False
-    ) if task_type == "application" else "{}"}
+    ))
 
-
-    Output Format:
-    {context['format_rules']}
-    """
 
     print(f"Prompt length = {len(prompt):,} chars")
 
@@ -864,6 +928,23 @@ def generate_initial_data(
         ]
 
         # ---------------------------------------------------------
+        # Repair V2 用の初期成果物を SAFE_ROOT に保存する。
+        # Contract validation より前に作業対象ファイルを確保する。
+        # ---------------------------------------------------------
+        for file_entry in data["files"]:
+            relative_path = normalize_generated_path(
+                file_entry["path"]
+            )
+            content = file_entry.get("content", "")
+
+            safe_write_file(
+                SAFE_ROOT,
+                relative_path,
+                content,
+            )
+
+
+        # ---------------------------------------------------------
         # Infrastructure Contract validation / repair
         # Generate直後に決定論的に検査する。
         # ---------------------------------------------------------
@@ -950,6 +1031,7 @@ def generate_initial_data(
                 contract_feedback="\n".join(
                     contract_errors
                 ),
+                deployment_contract=context.get("deployment_contract", {}),
             )
 
             for file_entry in data["files"]:
@@ -1561,10 +1643,8 @@ def generate_files(data: Dict[str, Any], allowed_paths: Optional[Set[str]] = Non
 
     import shutil
 
-    if SAFE_ROOT.exists():
-        shutil.rmtree(SAFE_ROOT)
-
-    SAFE_ROOT.mkdir(parents=True, exist_ok=True)
+    if not SAFE_ROOT.exists():
+        SAFE_ROOT.mkdir(parents=True, exist_ok=True)
 
     print(f"SAFE_ROOT = {SAFE_ROOT}")
 
@@ -1791,6 +1871,14 @@ def validate_infrastructure_playbook_contract(
     php_volume_found = False
     index_copy_found = False
 
+    required_php_env = {
+        "db_host": "mysql",
+        "db_port": 3306,
+        "db_name": "testdb",
+        "db_user": "root",
+        "db_password": "secret",
+    }
+
     if not isinstance(parsed_yaml, list):
         raise RuntimeError(
             "Infrastructure contract violation: "
@@ -1819,6 +1907,47 @@ def validate_infrastructure_playbook_contract(
                 and container_cfg.get("name") == "php"
             ):
                 php_container_found = True
+
+                # -------------------------------------------------
+                # PHP container must receive the Deployment Contract
+                # DB connection values through env:
+                # -------------------------------------------------
+
+                php_env = container_cfg.get("env")
+
+                if not isinstance(php_env, dict):
+                    violations.append(
+                    "Infrastructure contract violation: "
+                    "PHP container must define env: "
+                    "for the required DB connection values."
+                )
+                else:
+                    for key, expected_value in required_php_env.items():
+                        if php_env.get(key) != expected_value:
+                            violations.append(
+                                "Infrastructure contract violation: "
+                                f"PHP container env '{key}' must be "
+                                f"'{expected_value}'."
+                            )
+
+
+                # -------------------------------------------------
+                # PHP container must provide PDO MySQL support
+                # -------------------------------------------------
+                command = container_cfg.get("command")
+
+                required_command = [
+                    "sh",
+                    "-c",
+                    "docker-php-ext-install pdo_mysql && apache2-foreground",
+                ]
+
+                if command != required_command:
+                    violations.append(
+                        "Infrastructure contract violation: "
+                        "PHP container must provide pdo_mysql using "
+                        "the required Learning Phase startup command."
+                    )
 
                 volumes = container_cfg.get("volumes", [])
 
@@ -1903,8 +2032,8 @@ def validate_infrastructure_playbook_contract(
     return violations
 
 def postprocess_regenerated_file_content(
-    content: str,
-    target_file: str,
+content: str,
+target_file: str,
 ) -> str:
     """Apply extension-specific deterministic repair to regenerated content."""
 
@@ -1912,6 +2041,19 @@ def postprocess_regenerated_file_content(
         return content
 
     repaired = repair_podman_yaml_content(content)
+
+    # YAML document separators are not part of the generated file
+    # contract for this project. Remove accidental leading/trailing
+    # separators deterministically before YAML validation.
+    lines = repaired.splitlines()
+
+    while lines and lines[0].strip() == "---":
+        lines.pop(0)
+
+    while lines and lines[-1].strip() == "---":
+        lines.pop()
+
+    repaired = "\n".join(lines).strip() + "\n"
 
     if target_file == "ansible/playbook.yml":
         repaired = repaired.replace(
@@ -2161,6 +2303,7 @@ def repair_validation_errors(
     deploy_evidence: Optional[dict] = None,
     deploy_diagnosis=None,
     contract_feedback: str = "",
+    deployment_contract: Optional[dict] = None,
 ) -> Dict[str, str]:
 
     # 同一ファイルは1回だけ修正
@@ -2228,6 +2371,7 @@ def repair_validation_errors(
             },
 
             "contract_feedback": contract_feedback,
+            "deployment_contract": deployment_contract or {},
         }
 
         regenerated = regenerate_file_with_context(
@@ -2238,6 +2382,10 @@ def repair_validation_errors(
             task_rules,
             format_rules,
         )
+
+        if regenerated is None:
+            print(f"Repair did not modify {target_file}.")
+            continue
 
         regenerated = postprocess_regenerated_file_content(
             regenerated,
@@ -2648,12 +2796,16 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
             "errors": remote_errors,
             "stdout": stdout,
             "stderr": stderr,
-            "evidence": {
+            "validation_evidence": {
+                "stdout": stdout,
+                "stderr": stderr,
                 "raw_remote_stdout": stdout,
                 "raw_remote_stderr": stderr,
                 "raw_remote_error_text": remote_error_text,
+                "errors": remote_errors,
             },
-            "diagnosis": remote_diagnosis,
+            "deploy_diagnosis": remote_diagnosis,
+            "contract_feedback": "",
         }
 
         repair_target = "ansible/playbook.yml"
@@ -2707,6 +2859,8 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
                         f"Deploy auto repair failed while regenerating "
                         f"{repair_target}: {e}"
                     ) from e
+
+                regeneration_context["contract_feedback"] = str(e)
 
                 print(
                     "Retrying auto-repair with deterministic "
@@ -3232,14 +3386,14 @@ def review_application(
     task_name: str,
     task: str,
     rules: str,
+    review_rules: str,
+    task_review_rules: str,
+    reviewer_prompt: str,
 ) -> Dict[str, Any]:
 
     print("\n===== APPLICATION REVIEW START =====")
 
     review_prompt = f"""
-Role:
-You are an application reviewer for an AI-driven CI/CD pipeline.
-
 Task Name:
 {task_name}
 
@@ -3249,53 +3403,26 @@ Task:
 Project Rules:
 {rules}
 
-Review the generated files against the Task and Project Rules.
+Review Rules:
+{review_rules}
 
-Review priority:
-
-1. Scope compliance
-   - Generate only files required by the Task.
-   - Reject files that belong to infrastructure when the Task prohibits infrastructure files.
-   - Reject Ansible or Podman files when the Task prohibits them.
-   - Reject database-related files or configuration when the Task prohibits MySQL.
-
-2. Requirement compliance
-   - Verify that required files are present.
-   - Verify that the generated files satisfy the explicit requirements in the Task.
-
-3. PHP correctness
-   - PHP syntax issues
-   - Undefined variables
-   - Basic error handling issues
-
-4. Security
-   - Security risks relevant to the generated application.
-
-5. Code quality
-   - Only identify issues that materially affect the requested application.
-
-Do not reject a generated file based only on generic best practices when that issue is outside the scope of the current Task.
-
-Do not invent requirements that are not present in the Task or Project Rules.
+Application Review Rules:
+{task_review_rules}
 
 Generated Files:
 {json.dumps(data.get("files", []), indent=2, ensure_ascii=False)}
 
-Return JSON:
+Review the generated files according to the supplied Task, Project Rules,
+Review Rules, and Application Review Rules.
 
-{{
-    "approved": true/false,
-    "issues": [],
-    "summary": "",
-    "risks": []
-}}
+Return JSON only.
 """
 
     raw = ollama_chat(
         messages=[
             {
                 "role": "system",
-                "content": "You are an expert PHP reviewer.",
+                "content": reviewer_prompt,
             },
             {
                 "role": "user",
@@ -3337,7 +3464,15 @@ def run_application_pipeline(
     )
 
     print("\n===== APPLICATION REVIEW START =====")
-    review_result = review_application(data, task_name, task, context.get("rules", ""))
+    review_result = review_application(
+        data,
+        task_name,
+        task,
+        context.get("rules", ""),
+        context.get("review_rules", ""),
+        context.get("task_review_rules", ""),
+        context.get("reviewer_prompt", "")
+    )
     if not review_result.get("approved", False):
         print("Application review failed.")
         return False

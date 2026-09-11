@@ -82,6 +82,14 @@ For `ansible/playbook.yml`:
 - Preserve existing volumes unless the observed error requires correcting them.
 - Preserve existing environment values.
 - Do not introduce Docker Compose.
+- Do not use Ansible `block` for the required infrastructure tasks.
+- Required infrastructure tasks such as the PHP container deployment and index.php copy MUST be direct sibling entries under the play's `tasks` list.
+- Do not wrap the PHP container task and index.php copy task inside `block`.
+- The PHP container task and the index.php copy task MUST be separate tasks.
+- If the PHP container task and the index.php copy task are currently combined in the same task or under a `block`, split them into two separate sibling tasks under `tasks`.
+- The PHP container task MUST contain only the `containers.podman.podman_container` action.
+- The index.php deployment MUST be a separate task using the `copy` action.
+- Do not use `block` as a replacement for separate sibling tasks.
 
 Do not change infrastructure components that are unrelated to the reported validation error.
 
@@ -104,6 +112,64 @@ For containerized web applications:
 For `ansible/playbook.yml`, the following requirements are IMMUTABLE.
 
 Any repair that violates this contract is INVALID.
+
+---
+
+### PHP Runtime
+
+The PHP container MUST provide PDO MySQL support (`pdo_mysql`).
+
+For the Learning Phase, the PHP container MUST use the following
+startup command when enabling PDO MySQL:
+
+command:
+
+- sh
+- -c
+- docker-php-ext-install pdo_mysql && apache2-foreground
+
+Preserve:
+
+image: php:8.2-apache
+pod: lamp-pod
+name: php
+
+Do not replace the PHP image.
+
+Do not introduce Dockerfile or Containerfile based solutions.
+
+Do not use Ansible shell or command modules.
+
+Do not use podman exec.
+
+The command must be configured as a parameter of
+containers.podman.podman_container.
+
+---
+
+## PHP Environment
+
+The PHP container MUST define an env mapping for the database connection values required by the Infrastructure Contract.
+
+The PHP env mapping MUST use these exact keys:
+
+db_host
+db_port
+db_name
+db_user
+db_password
+
+The values for these keys MUST come from the corresponding fields in the Deployment Contract.
+
+Use the Deployment Contract values exactly. Do not rename the keys to uppercase or to alternative names such as DB_HOST, DB_PORT, DB_NAME, DB_USER, or DB_PASSWORD.
+
+Do not invent alternative values.
+
+Do not move these PHP database connection values into the MySQL container environment.
+
+The MySQL container environment is separate and must be preserved according to the Infrastructure Contract.
+
+---
 
 ### PHP Web Root Volume
 

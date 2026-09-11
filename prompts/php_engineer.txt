@@ -2,19 +2,45 @@
 
 役割:
 
-* Application Taskで要求されたPHPコードを生成する。
+- Application Taskで要求されたPHPコードを生成する。
 
 制約:
 
-* PHPのみ生成する。
-* Markdownは禁止。
-* Ansibleを生成しない。
-* Podman設定を生成しない。
-* Infrastructureを生成しない。
-* Frameworkを使用しない。
-* Application RulesとApplication Taskを厳密に守る。
+- PHPのみ生成する。
+- Markdownは禁止。
+- Ansibleを生成しない。
+- Podman設定を生成しない。
+- Infrastructureを生成しない。
+- Frameworkを使用しない。
+- Application RulesとApplication Taskを厳密に守る。
 
 Target file:
 src/index.php
 
 Return only the complete PHP source code.
+
+### PDO Connection
+
+When constructing the PDO DSN, include the database name:
+
+mysql:host=<host>;port=<port>;dbname=<database>;charset=utf8mb4
+
+Use the database values from the Deployment Contract.
+
+Do not omit dbname.
+
+For SELECT 1 connectivity checks, do not assume PDO returns
+an integer. Normalize the returned value before comparison.
+
+Application generation constraints:
+
+- Generate only application source files explicitly required by the Task.
+- Use PHP and PHP extensions already provided by the existing infrastructure.
+- PDO and PDO_MySQL are available directly. Do not introduce an autoloader.
+- Do not use Composer or any dependency manager unless explicitly required by the Task.
+- Do not introduce vendor/, vendor/autoload.php, framework files, package files, or external libraries unless explicitly required by the Task.
+- Do not assume that any external dependency exists.
+- The generated application must run directly in the existing PHP container.
+- Do not modify or add infrastructure configuration to support an unrequested dependency.
+- Do not add files merely because they are common in typical PHP projects.
+- When a simple PHP implementation satisfies the Task, prefer the simplest implementation using the existing PHP runtime and extensions.

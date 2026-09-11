@@ -1,3 +1,5 @@
+#context/architecture.md
+
 # Architecture
 
 ## Project
@@ -12,9 +14,7 @@ The pipeline generates, validates, deploys and repairs infrastructure artifacts 
 
 The current phase is:
 
-```text
 learning
-```
 
 The Infrastructure phase is responsible for preparing the runtime environment required by later phases.
 
@@ -22,7 +22,9 @@ The Infrastructure phase is responsible for preparing the runtime environment re
 
 ## Infrastructure Responsibility
 
-The Infrastructure phase provides:
+The Infrastructure phase provides the runtime environment required by later phases.
+
+Its responsibilities include:
 
 - Ansible inventory
 - Ansible playbook
@@ -30,9 +32,13 @@ The Infrastructure phase provides:
 - PHP/Apache web container
 - MySQL database container
 - Web document root
+- Required database initialization
 - Infrastructure validation page
+- Infrastructure validation
 
-Application business logic is outside the Infrastructure phase.
+The Infrastructure phase must make the database required by the Deployment Contract available to the application.
+
+Application business logic and application data initialization are outside the Infrastructure phase unless explicitly required by the Deployment Contract.
 
 ---
 
@@ -40,28 +46,28 @@ Application business logic is outside the Infrastructure phase.
 
 The Infrastructure runtime is structured as:
 
-```text
 Ansible
-   |
-   v
+|
+v
 Podman
-   |
-   +-- lamp-pod
-         |
-         +-- php
-         |     |
-         |     +-- Apache / PHP 8.2
-         |
-         +-- mysql
-```
+|
++-- lamp-pod
+|
++-- php
+| |
+| +-- Apache / PHP 8.2
+|
++-- mysql
 
 The PHP and MySQL containers share the same Pod.
 
 The application reaches MySQL through the container name:
 
-```text
 mysql
-```
+
+The database service is therefore reachable from the PHP container at:
+
+mysql:3306
 
 ---
 
@@ -69,53 +75,51 @@ mysql
 
 The web request flow is:
 
-```text
 Browser
-   |
-   v
+|
+v
 Host :8080
-   |
-   v
+|
+v
 Pod :80
-   |
-   v
+|
+v
 PHP / Apache
-   |
-   v
+|
+v
 /var/www/html
-```
 
 The host-side document directory is:
 
-```text
 /home/vboxuser/containers/html
-```
 
 The container-side document root is:
 
-```text
 /var/www/html
-```
+
+The host-side directory is mounted into the PHP container so that application files become available under the container document root.
 
 ---
 
 ## Database
 
-MySQL runs as a container in the same Pod.
+MySQL runs as a container in the same Pod as PHP.
 
-The database is identified inside the Pod by:
+The database service is identified inside the Pod by:
 
-```text
 mysql
-```
 
-The application-side database endpoint is therefore:
+The application-side database endpoint is:
 
-```text
 mysql:3306
-```
 
-Database configuration values are defined by the Infrastructure task and its rules.
+The database required by the application is defined by the Deployment Contract.
+
+The Infrastructure phase is responsible for ensuring that the contracted database exists and is available to the application.
+
+Database-specific implementation details are defined in:
+
+context/infra_rules.md
 
 ---
 
@@ -125,9 +129,7 @@ The generated Ansible playbook represents the Infrastructure runtime described a
 
 The playbook targets:
 
-```text
 execution
-```
 
 The playbook uses the Podman Ansible collection to manage:
 
@@ -141,9 +143,7 @@ Published host ports belong to the Pod-level network configuration.
 
 Detailed Infrastructure constraints are defined in:
 
-```text
 context/infra_rules.md
-```
 
 ---
 
@@ -151,17 +151,17 @@ context/infra_rules.md
 
 Infrastructure artifacts are:
 
-```text
 ansible/playbook.yml
 ansible/inventory.ini
 src/index.php
-```
 
-`ansible/playbook.yml` describes runtime infrastructure.
+ansible/playbook.yml describes runtime infrastructure.
 
-`ansible/inventory.ini` describes the Ansible execution target.
+ansible/inventory.ini describes the Ansible execution target.
 
-`src/index.php` provides the Infrastructure web validation page.
+src/index.php provides the Infrastructure web validation page.
+
+The Infrastructure phase must not add application business logic to these artifacts.
 
 ---
 
@@ -171,15 +171,15 @@ The Infrastructure phase provides the runtime contract required by later phases.
 
 The important runtime endpoints are:
 
-```text
 Web:
 8080 -> 80
 
 Database:
 mysql:3306
-```
 
-The Infrastructure phase must provide a reachable web endpoint before later application-level validation can be considered successful.
+The Deployment Contract also defines the database configuration required by the application.
+
+The Infrastructure phase must provide the contracted runtime resources before later application-level validation can be considered successful.
 
 ---
 
@@ -191,10 +191,11 @@ Infrastructure validation verifies that:
 2. The Pod can be created and started.
 3. Required containers can be created and started.
 4. The web port is reachable.
-5. Apache/PHP can serve `src/index.php`.
+5. Apache/PHP can serve src/index.php.
 6. The expected Infrastructure validation page can be returned.
+7. The database required by the Deployment Contract is available.
 
-Application-level database functionality is validated in a later phase.
+Application-level business logic and application-specific database behavior are validated in a later phase.
 
 ---
 
@@ -202,16 +203,18 @@ Application-level database functionality is validated in a later phase.
 
 Keep Infrastructure configuration deterministic.
 
-Do not introduce configuration that is not required by the Infrastructure task, architecture, or validation evidence.
+Do not introduce configuration that is not required by the Infrastructure task, architecture, Deployment Contract, or validation evidence.
 
-Infrastructure-specific technical constraints belong in:
+Infrastructure responsibilities are defined here.
 
-```text
+Infrastructure-specific technical constraints are defined in:
+
 context/infra_rules.md
-```
 
-Task-specific requirements belong in:
+Task-specific requirements belong to:
 
-```text
 task/infrastructure.md
-```
+
+Repair-specific behavior is defined in:
+
+context/repair_rules.md

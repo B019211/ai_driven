@@ -179,6 +179,14 @@ def repair_podman_yaml_content(content: str) -> str:
     try:
         import yaml
 
+        content = content.strip()
+
+        if content.startswith("---\n"):
+            content = content[4:]
+
+        if content.rstrip().endswith("\n---"):
+            content = content.rstrip()[:-4]
+
         parsed = yaml.safe_load(content)
     except Exception as e:
         print("=== PODMAN YAML REPAIR SKIPPED: INVALID YAML ===")

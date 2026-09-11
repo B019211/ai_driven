@@ -1,31 +1,32 @@
-- name: Build LAMP infrastructure
+- name: Deploy LAMP Infrastructure
   hosts:
   - execution
-  gather_facts: false
   tasks:
-  - name: Create Lamp Pod
+  - name: Create lamp-pod with port mapping
     containers.podman.podman_pod:
-      state: started
       name: lamp-pod
+      state: started
       publish:
       - 8080:80
-  - name: Deploy PHP Container
+  - name: Start PHP container in pod
     containers.podman.podman_container:
       image: php:8.2-apache
       name: php
       pod: lamp-pod
       state: started
-      volumes:
-      - /home/vboxuser/containers/html:/var/www/html:Z
-  - name: Deploy MySQL Container
-    containers.podman.podman_container:
-      image: mysql:8.0
-      name: mysql
-      pod: lamp-pod
-      state: started
+      command:
+      - sh
+      - -c
+      - docker-php-ext-install pdo_mysql && apache2-foreground
       env:
-        MYSQL_ROOT_PASSWORD: secret
-  - name: Copy index.php to web root
-    ansible.builtin.copy:
+        db_host: mysql
+        db_port: 3306
+        db_name: testdb
+        db_user: root
+        db_password: secret
+      volumes:
+      - /home/vboxuser/containers/html:/var/www/html
+  - name: Copy index.php to web container
+    copy:
       src: ../src/index.php
       dest: /home/vboxuser/containers/html/index.php
