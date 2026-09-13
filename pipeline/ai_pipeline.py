@@ -2717,6 +2717,36 @@ def perform_deploy_cycle() -> Tuple[dict, dict, dict, bool]:
         False,
     )
 
+def deploy_application_files() -> Tuple[int, str, str]:
+    """Application 用 Ansible Playbook を control node に転送して実行する。"""
+
+    local_playbook = PROJECT_ROOT / "ansible" / "application_deploy.yml"
+    remote_playbook = (
+        "/home/vboxuser/ai_driven/generated/files/ansible/application_deploy.yml"
+    )
+
+    print("===== SCP APPLICATION DEPLOY PLAYBOOK =====")
+
+    scp_code, scp_stdout, scp_stderr = run_command([
+        "scp",
+        str(local_playbook),
+        f"{ANSIBLE_CONTROL_NODE}:{remote_playbook}",
+    ])
+
+    if scp_code != 0:
+        return scp_code, scp_stdout, scp_stderr
+
+    print("===== RUN APPLICATION ANSIBLE =====")
+
+    return run_remote_command(
+        ANSIBLE_CONTROL_NODE,
+        "cd /home/vboxuser/ai_driven/generated/files && "
+        "ansible-playbook "
+        "-i ansible/inventory.ini "
+        "ansible/application_deploy.yml",
+    )
+
+
 # =========================================================
 # main()
 # =========================================================
@@ -3891,7 +3921,11 @@ def run_application_pipeline(
     for file in data.get("files", []):
         print("-", file.get("path"))
 
+
     # Persist generated files to SAFE_ROOT so we can validate them locally.
+
+    print(f"APPLICATION ALLOWED PATHS = {sorted(ALLOWED_PATHS | APPLICATION_ALLOWED_PATHS)}")
+
     validation_errors, inventory_file, playbook_file, php_file = generate_files(
         data,
         allowed_paths=ALLOWED_PATHS | APPLICATION_ALLOWED_PATHS,
@@ -3995,40 +4029,23 @@ def run_application_pipeline(
             f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
         ])
 
-        print("===== REMOTE PLAYBOOK CHECK =====")
+        print("===== APPLICATION ANSIBLE DEPLOY =====")
         try:
-            remote_cat = run_remote_command(
-                ANSIBLE_CONTROL_NODE,
-                "cat /home/vboxuser/ai_driven/generated/files/ansible/playbook.yml",
-            )
-            print(remote_cat if isinstance(remote_cat, str) else remote_cat)
-        except Exception as e:
-            print("Remote playbook check failed:", e)
-            return False
+            deploy_code, deploy_stdout, deploy_stderr = deploy_application_files()
 
-        print("===== REMOTE VALIDATION =====")
-        try:
-            remote_errors, rv_stdout, rv_stderr = run_remote_validation()
-            if remote_errors:
-                print("Remote validation reported errors:")
-                for e in remote_errors:
-                    print(e)
+            print(deploy_stdout)
+
+            if deploy_stderr:
+                print(deploy_stderr)
+
+            if deploy_code != 0:
+                print("Application Ansible deploy failed.")
                 return False
+
         except Exception as e:
-            print("Remote validation failed:", e)
+            print("Application Ansible deploy failed:", e)
             return False
 
-        print("===== PERFORM DEPLOY CYCLE =====")
-        try:
-            deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = perform_deploy_cycle()
-            print("deploy_success =", deploy_success)
-            print(json.dumps(deploy_diagnosis, indent=2, ensure_ascii=False))
-        except Exception as e:
-            print("Deploy failed:", e)
-            deploy_result = {}
-            deploy_evidence = {}
-            deploy_diagnosis = {}
-            deploy_success = False
 
         print("\n===== BROWSER VALIDATION (application pipeline) =====")
         try:

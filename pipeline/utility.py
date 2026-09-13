@@ -104,6 +104,9 @@ def normalize_generated_path(path: str) -> str:
         "ansible/playbook.yml",
         "ansible/inventory.ini",
         "src/index.php",
+        "src/config.php",
+        "src/db.php",
+        "src/functions.php",
     }
 
     if path not in allowed:

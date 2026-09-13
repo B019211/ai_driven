@@ -14,10 +14,20 @@
 - Frameworkを使用しない。
 - Application RulesとApplication Taskを厳密に守る。
 
-Target file:
-src/index.php
+Output:
+Generate only the application source files required by the Application Task.
 
-Return only the complete PHP source code.
+Return the files as part of the required Generate JSON structure.
+
+Each generated file must contain only:
+- path
+- content
+
+Do not add fields such as:
+- content_type
+- language
+- type
+- description
 
 ### PDO Connection
 
@@ -43,4 +53,17 @@ Application generation constraints:
 - The generated application must run directly in the existing PHP container.
 - Do not modify or add infrastructure configuration to support an unrequested dependency.
 - Do not add files merely because they are common in typical PHP projects.
+
+File Structure Constraints:
+
+- Generate only files that are permitted by the Application generation environment.
+- The currently permitted application files are:
+  - src/index.php
+  - src/config.php
+  - src/functions.php
+  - src/db.php
+- Do not generate files under new directories such as src/models/.
+- Do not generate Schedule.php or other additional dependency files unless they are explicitly permitted by the Application environment.
+- Every PHP include or require target must correspond to a generated file or an existing file provided by the runtime.
+- Prefer a simple multi-file implementation using only the permitted application files.
 - When a simple PHP implementation satisfies the Task, prefer the simplest implementation using the existing PHP runtime and extensions.
