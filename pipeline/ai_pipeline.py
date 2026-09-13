@@ -401,7 +401,12 @@ def regenerate_file_with_context(
     Do not add unrelated resources.
     Do not change values that are not required by the reported violations.
 
-    Return the complete repaired file content.
+    Return exactly one JSON object.
+    The JSON object must contain exactly one key: content.
+    The value of content must be the complete repaired file content.
+    Do not return YAML directly.
+    Do not return Markdown.
+    Do not use code fences.
     """
 
     else:
@@ -436,21 +441,68 @@ def regenerate_file_with_context(
     {contract_text}
 
     CURRENT FILE:
-    --- BEGIN CURRENT FILE ---
     {current_file}
-    --- END CURRENT FILE ---
 
     REPAIR RULES:
-    {repair_rules}
+Repair only the reported runtime problem.
 
-    Repair ONLY the reported problem.
-    Preserve all valid existing structure and content.
-    Do not redesign the file.
-    Do not add unrelated resources.
+Preserve the existing file structure and every valid task.
 
-    Return the complete repaired file content.
+Do not delete, rename, reorder, or redesign existing tasks unless the reported problem directly requires that exact change.
+
+Do not replace valid Ansible module parameters with alternative parameter names.
+
+Do not replace valid literal values with Jinja expressions, environment lookups, or variables.
+
+Do not change hosts, task names, module names, images, volumes, env keys, command structure, or copy tasks unless the reported problem specifically requires that field to change.
+
+The smallest possible edit is required.
+
+Do not redesign the file.
+
+Do not add unrelated resources.
+
+Do not modify values that are not required to fix the reported runtime problem.
+
+The Infrastructure Contract values are authoritative.
+
+For PHP container environment variables, preserve the exact Deployment Contract values:
+db_host = mysql
+db_port = 3306
+db_name = testdb
+db_user = root
+db_password = secret
+
+Do not replace these values with Jinja expressions.
+
+Do not use environment variable lookups for these PHP environment values.
+
+Do not move these values to another container.
+
+Repair ONLY the reported problem.
+
+Return exactly one JSON object.
+
+The JSON object must contain exactly one key: content.
+
+The value of content must be the complete repaired file content.
+
+Do not return YAML directly.
+
+Do not return Markdown.
+
+Do not use code fences.
+
+Do not return explanations.
+
+Do not return analysis.
     """
 
+# repairのトークンチェック
+    print("\n===== ACTUAL REPAIR PROMPT =====")
+    print(prompt)
+    print("================================")
+#    raise RuntimeError("STOP: inspect actual repair prompt")
 
     print(f"Repair prompt length = {len(prompt):,} chars")
     print("Calling Ollama...")
@@ -979,6 +1031,7 @@ def generate_initial_data(
                     "Infrastructure YAML parse failed:\n"
                     + yaml_error
                 ),
+                deployment_contract=context.get("deployment_contract", {}),
             )
 
             for file_entry in data["files"]:
@@ -1867,6 +1920,7 @@ def validate_infrastructure_playbook_contract(
         "/home/vboxuser/containers/html/index.php"
     )
 
+    pod_found = False
     php_container_found = False
     php_volume_found = False
     index_copy_found = False
@@ -1894,6 +1948,41 @@ def validate_infrastructure_playbook_contract(
         for task in tasks:
             if not isinstance(task, dict):
                 continue
+
+            # -----------------------------------------------------
+            # LAMP pod must use the required podman_pod module shape
+            # -----------------------------------------------------
+            pod_cfg = task.get(
+                "containers.podman.podman_pod"
+            )
+
+            if isinstance(pod_cfg, dict):
+                if pod_cfg.get("name") == "lamp-pod":
+                    pod_found = True
+
+                if "name" not in pod_cfg:
+                    violations.append(
+                        "Infrastructure contract violation: "
+                        "containers.podman.podman_pod must define "
+                        "name: lamp-pod."
+                    )
+
+                if "pod_name" in pod_cfg or "container" in pod_cfg:
+                    violations.append(
+                        "Infrastructure contract violation: "
+                        "containers.podman.podman_pod must use "
+                        "name: lamp-pod and must not use "
+                        "pod_name or container."
+                    )
+
+                if "publish_port_map" in pod_cfg:
+                    violations.append(
+                        "Infrastructure contract violation: "
+                        "containers.podman.podman_pod must use "
+                        "publish: 8080:80 "
+                        "and must not use publish_port_map."
+                    )
+
 
             # -----------------------------------------------------
             # PHP container must keep the host -> container bind mount
@@ -2007,6 +2096,12 @@ def validate_infrastructure_playbook_contract(
                             "index.php copy task must not use "
                             "ansible_os_family == 'Linux'."
                         )
+
+    if not pod_found:
+        violations.append(
+            "Infrastructure contract violation: "
+            "LAMP pod 'lamp-pod' was not found."
+        )
 
     if not php_container_found:
         violations.append(
@@ -2312,8 +2407,10 @@ def repair_validation_errors(
 
     for err in validation_errors:
         file_value = err.get("file")
+
         if target_file_override:
             override_path = Path(target_file_override)
+
             if override_path.is_absolute():
                 try:
                     target_file = str(
@@ -2328,8 +2425,10 @@ def repair_validation_errors(
 
         elif file_value:
             resolved_file = Path(file_value)
+
             if not resolved_file.is_absolute():
                 resolved_file = (safe_root / file_value).resolve()
+
             try:
                 target_file = str(
                     resolved_file.relative_to(safe_root.resolve())
@@ -2342,16 +2441,87 @@ def repair_validation_errors(
                     f"Repair target is outside SAFE_ROOT: {file_value}"
                 )
 
-
-
-
     for target_file in target_files:
         print(f"[ERROR] {target_file}")
+
+        target_path = safe_root / target_file
+
+        if not target_path.exists():
+            raise RuntimeError(
+                f"Repair target does not exist: {target_file}"
+            )
+
+        current_content = target_path.read_text(encoding="utf-8")
+
+        # ============================================================
+        # Deterministic Contract Repair
+        # ============================================================
+        #
+        # 既知の Infrastructure Contract 違反は LLM に修正させない。
+        # 今回は podman_pod の旧/誤キーだけを機械的に修正する。
+        #
+        # container/pod_name:
+        #     → name:
+        #
+        # それ以外の内容は一切変更しない。
+        # ============================================================
+
+        deterministic_content = current_content
+
+        if target_file == "ansible/playbook.yml":
+            deterministic_content = deterministic_content.replace(
+                "container/pod_name: lamp-pod",
+                "name: lamp-pod",
+            )
+
+        if deterministic_content != current_content:
+            print("===== DETERMINISTIC CONTRACT REPAIR =====")
+            print(f"Target: {target_file}")
+            print("Replace: container/pod_name: lamp-pod")
+            print("With:    name: lamp-pod")
+
+            safe_write_file(
+                safe_root,
+                target_file,
+                deterministic_content,
+            )
+
+            repaired_files[target_file] = deterministic_content
+
+            print("===== FILE AFTER DETERMINISTIC REPAIR =====")
+            print(
+                deterministic_content[:600]
+            )
+
+            print("Deterministic repair completed.")
+
+            # 今回は既知の Contract 違反を修正できたので、
+            # LLM Repair は実行しない。
+            continue
+
+        # ============================================================
+        # AI Repair fallback
+        # ============================================================
+
         print("BEFORE REGENERATE")
+
+        # Runtime validation issues are the primary repair evidence.
+        # Preserve all issues, but explicitly prioritize browser/runtime
+        # failures so the Repair Agent does not overlook them.
+        prioritized_errors = sorted(
+            validation_errors,
+            key=lambda issue: (
+                0 if issue.get("type") == "browser_status" else 1,
+                0 if issue.get("severity") == "blocker" else 1,
+            ),
+        )
 
         regeneration_context = {
             "source": "validation",
-            "errors": validation_errors,
+            "errors": prioritized_errors,
+            "primary_runtime_issue": (
+                prioritized_errors[0] if prioritized_errors else {}
+            ),
 
             # Runtime validation の実測結果を Repair V2 に渡す
             "stdout": validation_stdout,
@@ -2392,10 +2562,9 @@ def repair_validation_errors(
             target_file,
         )
 
-        # Repair v2 already returns the complete repaired file content.
-        # Do not interpret it as a generated-file JSON response.
-        #       regenerated = extract_file_content_from_response(regenerated)
-        print("===== REGENERATE regenerate_file_with_context RETURN CHECK =====")
+        print(
+            "===== REGENERATE regenerate_file_with_context RETURN CHECK ====="
+        )
         print(type(regenerated))
         print(repr(regenerated[:100]) if regenerated else regenerated)
 
@@ -2404,11 +2573,21 @@ def repair_validation_errors(
                 f"Regeneration returned None: {target_file}"
             )
 
-        safe_write_file(safe_root, target_file, regenerated)
+        safe_write_file(
+            safe_root,
+            target_file,
+            regenerated,
+        )
+
         repaired_files[target_file] = regenerated
+
         print("AFTER WRITE")
         print("===== FILE AFTER WRITE =====")
-        print((safe_root / target_file).read_text(encoding="utf-8")[:600])
+        print(
+            (safe_root / target_file).read_text(
+                encoding="utf-8"
+            )[:600]
+        )
 
         print("Repair completed.")
 
@@ -2724,6 +2903,7 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
             context["task_rules"],
             context["format_rules"],
             SAFE_ROOT,
+            deployment_contract=context.get("deployment_contract", {}),
         )
 
     if not validation_success:
@@ -2927,91 +3107,139 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
                 print(e)
             raise RuntimeError("Remote validation failed after repair")
 
+    
     deploy_success = False
+
     if validation_success:
         print("\nValidation passed")
         print(playbook_file.read_text())
-        deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = perform_deploy_cycle()
 
-    pod_state = check_pod_state()
-
-    deploy_evidence["pod_state"] = pod_state
-
-    if not pod_state["pod_running"]:
-        print("Pod is not running after deploy")
-
-        deploy_success = False
-
-        deploy_diagnosis = {
-            "category": "deployment",
-            "root_cause": "pod_not_running",
-            "reason": "lamp-pod exists but is not running after deployment.",
-            "confidence": 0.99,
-            "repair_hint": "Ensure the deployment starts the existing Pod and its containers.",
-            "repair_target": "ansible/playbook.yml",
-        }
-
-    for repair_attempt in range(2):
-        print(f"\n===== BROWSER VALIDATION (attempt {repair_attempt + 1}) =====")
-        browser_result = run_browser_validation()
-        browser_issues = analyze_browser_validation(browser_result)
-        print(json.dumps(browser_result, indent=2, ensure_ascii=False))
-        print("Browser issues:", json.dumps(browser_issues, ensure_ascii=False))
-
-        print("\n===== PHP LINT =====")
-        lint_result = run_php_lint()
-        lint_issues = analyze_php_lint_result(lint_result)
-        print(json.dumps(lint_result, indent=2, ensure_ascii=False))
-        print("PHP lint issues:", json.dumps(lint_issues, ensure_ascii=False))
-
-        diagnosis = review_data.get("diagnosis", {})
-        repair_target = plan_repair(
-            diagnosis,
-            browser_result,
-            browser_issues,
-            lint_result,
-            lint_issues,
-            deploy_result,
-            deploy_diagnosis,
+        deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = (
+            perform_deploy_cycle()
         )
 
-        if not browser_issues and not lint_issues:
-            validation_success = deploy_success
-            break
+        # Deployment succeeded at the command level.
+        # Confirm the actual Pod state before browser/PHP validation.
+        pod_state = check_pod_state()
+        deploy_evidence["pod_state"] = pod_state
 
-        validation_success = False
+        if not pod_state["pod_running"]:
+            print("Pod is not running after deploy")
 
-        error_list = [
-            {"type": issue.get("type", "validation_error"), "file": repair_target, "stderr": issue.get("detail", "")}
-            for issue in browser_issues + lint_issues
-        ]
+            deploy_success = False
 
-        repair_validation_errors(
-            error_list,
-            browser_result.get("stdout", "") + "\n" + lint_result.get("stdout", ""),
-            browser_result.get("stderr", "") + "\n" + lint_result.get("stderr", ""),
-            context["architecture"],
-            context["rules"],
-            context["task_rules"],
-            context["format_rules"],
-            SAFE_ROOT,
-            target_file_override=repair_target,
-            deploy_evidence=deploy_evidence,
-            deploy_diagnosis=deploy_diagnosis
-        )
+            deploy_diagnosis = {
+                "category": "deployment",
+                "root_cause": "pod_not_running",
+                "reason": "lamp-pod exists but is not running after deployment.",
+                "confidence": 0.99,
+                "repair_hint": (
+                    "Ensure the deployment starts the existing Pod and its containers."
+                ),
+                "repair_target": "ansible/playbook.yml",
+            }
+    else:
+        print("\nValidation failed - skip deployment")
 
-        print("\n===== SCP TO ANSIBLE CONTROL NODE (after repair) =====")
-        run_command([
-            "scp",
-            "-r",
-            str(SAFE_ROOT),
-            f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
-        ])
+    if not deploy_success:
+        print("\n===== DEPLOY FAILED - SKIP BROWSER/PHP VALIDATION =====")
+    else:
+        for repair_attempt in range(2):
+            print(f"\n===== BROWSER VALIDATION (attempt {repair_attempt + 1}) =====")
+            browser_result = run_browser_validation()
+            browser_issues = analyze_browser_validation(browser_result)
+            print(json.dumps(browser_result, indent=2, ensure_ascii=False))
+            print("Browser issues:", json.dumps(browser_issues, ensure_ascii=False))
 
-        print("\n===== REDEPLOY AFTER REPAIR =====")
-        deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = perform_deploy_cycle()
-        if not deploy_success:
-            break
+            print("\n===== PHP LINT =====")
+            lint_result = run_php_lint()
+            lint_issues = analyze_php_lint_result(lint_result)
+            print(json.dumps(lint_result, indent=2, ensure_ascii=False))
+            print("PHP lint issues:", json.dumps(lint_issues, ensure_ascii=False))
+
+            diagnosis = review_data.get("diagnosis", {})
+            repair_target = plan_repair(
+                diagnosis,
+                browser_result,
+                browser_issues,
+                lint_result,
+                lint_issues,
+                deploy_result,
+                deploy_diagnosis,
+            )
+
+            if not browser_issues and not lint_issues:
+                validation_success = deploy_success
+                break
+
+            validation_success = False
+
+            error_list = [
+                {
+                    "type": issue.get("type", "validation_error"),
+                    "file": repair_target,
+                    "stderr": issue.get("detail", ""),
+                }
+                for issue in browser_issues + lint_issues
+            ]
+
+            repair_validation_errors(
+                error_list,
+                browser_result.get("stdout", "") + "\n" + lint_result.get("stdout", ""),
+                browser_result.get("stderr", "") + "\n" + lint_result.get("stderr", ""),
+                context["architecture"],
+                context["rules"],
+                context["task_rules"],
+                context["format_rules"],
+                SAFE_ROOT,
+                target_file_override=repair_target,
+                deploy_evidence=deploy_evidence,
+                deploy_diagnosis=deploy_diagnosis,
+                deployment_contract=context.get("deployment_contract", {}),
+            )
+
+            print("\n===== SCP TO ANSIBLE CONTROL NODE (after repair) =====")
+            run_command([
+                "scp",
+                "-r",
+                str(SAFE_ROOT),
+                f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
+            ])
+
+            print("\n===== REDEPLOY AFTER REPAIR =====")
+            (
+                deploy_result,
+                deploy_evidence,
+                deploy_diagnosis,
+                deploy_success,
+            ) = perform_deploy_cycle()
+
+            if not deploy_success:
+                validation_success = False
+                break
+
+            # Re-check actual Pod state after every redeploy.
+            pod_state = check_pod_state()
+            deploy_evidence["pod_state"] = pod_state
+
+            if not pod_state["pod_running"]:
+                print("Pod is not running after redeploy.")
+
+                deploy_success = False
+                validation_success = False
+
+                deploy_diagnosis = {
+                    "category": "deployment",
+                    "root_cause": "pod_not_running",
+                    "reason": "lamp-pod exists but is not running after redeployment.",
+                    "confidence": 0.99,
+                    "repair_hint": (
+                        "Ensure the deployment starts the existing Pod and its containers."
+                    ),
+                    "repair_target": "ansible/playbook.yml",
+                }
+
+                break
 
     if not validation_success and deploy_success:
         combined_issues = browser_issues + lint_issues
@@ -3071,37 +3299,216 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
                 repair_publish_port(SAFE_ROOT / "ansible/playbook.yml")
 
             else:
-                # Use deploy_diagnosis to regenerate the indicated repair_target
+                # Deploy failure:
+                # First apply deterministic contract repair.
+                # Only fall back to AI repair when no deterministic repair applies.
                 try:
-                    print(f"===== REGENERATE {repair_target} USING AI =====")
-                    regeneration_context = {
-                        "source": "deploy",
-                        "errors": [deploy_diagnosis],
-                        "stdout": deploy_result.get("stdout", ""),
-                        "stderr": deploy_result.get("stderr", ""),
-                        "evidence": deploy_evidence,
-                        "diagnosis": deploy_diagnosis,
-                    }
+                    target_path = SAFE_ROOT / repair_target
 
-                    regenerated = regenerate_file_with_context(
-                        repair_target,
-                        context["architecture"],
-                        regeneration_context,
-                        context["rules"],
-                        context["task_rules"],
-                        context["format_rules"],
+                    if not target_path.exists():
+                        raise RuntimeError(
+                            f"Repair target does not exist: {repair_target}"
+                        )
+
+                    current_content = target_path.read_text(
+                        encoding="utf-8"
                     )
 
-                    if regenerated is None:
-                        raise RuntimeError(f"Regeneration returned None: {repair_target}")
-                      
-                    safe_write_file(SAFE_ROOT, repair_target, regenerated)
-                    print(f"Regenerated file written to SAFE_ROOT: {repair_target}")
+                    deterministic_content = current_content
+
+                    # ====================================================
+                    # Deterministic Contract Repair
+                    # ====================================================
+                    #
+                    # Known infrastructure contract violation:
+                    # container/pod_name -> name
+                    #
+                    # Only this exact invalid key is replaced.
+                    # All other valid configuration is preserved.
+                    # ====================================================
+
+                    if repair_target == "ansible/playbook.yml":
+                        deterministic_content = deterministic_content.replace(
+                            "container/pod_name: lamp-pod",
+                            "name: lamp-pod",
+                        )
+
+                        deterministic_content = deterministic_content.replace(
+                            "publish_port_map:",
+                            "publish:",
+                        )
+
+                    if deterministic_content != current_content:
+                        print("===== DETERMINISTIC DEPLOY REPAIR =====")
+                        print(f"Target: {repair_target}")
+
+                        if "container/pod_name: lamp-pod" in current_content:
+                            print(
+                                "Replace: container/pod_name: lamp-pod"
+                            )
+                            print("With:    name: lamp-pod")
+
+                        if "publish_port_map:" in current_content:
+                            print(
+                                "Replace: publish_port_map:"
+                            )
+                            print("With:    publish:")
+
+                        safe_write_file(
+                            SAFE_ROOT,
+                            repair_target,
+                            deterministic_content,
+                        )
+
+                        print(
+                            "===== FILE AFTER DETERMINISTIC DEPLOY REPAIR ====="
+                        )
+                        print(
+                            deterministic_content[:600]
+                        )
+
+                        print(
+                            "Deterministic deploy repair completed."
+                        )
+
+                    else:
+                        # ====================================================
+                        # AI Repair fallback
+                        # ====================================================
+
+                        print(
+                            f"===== REGENERATE {repair_target} USING AI ====="
+                        )
+
+                        regeneration_context = {
+                            "source": "deploy",
+                            "errors": [deploy_diagnosis],
+                            "stdout": deploy_result.get("stdout", ""),
+                            "stderr": deploy_result.get("stderr", ""),
+                            "evidence": deploy_evidence,
+                            "diagnosis": deploy_diagnosis,
+                            "deployment_contract": context.get(
+                                "deployment_contract", {}
+                            ),
+                        }
+
+                        regenerated = regenerate_file_with_context(
+                            repair_target,
+                            context["architecture"],
+                            regeneration_context,
+                            context["rules"],
+                            context["task_rules"],
+                            context["format_rules"],
+                        )
+
+                        if regenerated is None:
+                            raise RuntimeError(
+                                f"Regeneration returned None: {repair_target}"
+                            )
+
+                        # ============================================================
+                        # Validate AI Repair result before writing/deploying
+                        # ============================================================
+
+                        if repair_target == "ansible/playbook.yml":
+                            try:
+                                parsed_yaml = yaml.safe_load(regenerated)
+
+                                contract_errors = validate_infrastructure_playbook_contract(
+                                    parsed_yaml
+                                )
+
+                            except Exception as e:
+                                contract_errors = [
+                                    f"Invalid YAML generated by Repair AI: {e}"
+                                ]
+
+                            if contract_errors:
+                                print("===== AI REPAIR CONTRACT VIOLATION =====")
+                                for error in contract_errors:
+                                    print(f"- {error}")
+
+                                # AIが壊した既知のContractを決定的に修正
+                                deterministic_repaired = regenerated
+
+                                deterministic_repaired = deterministic_repaired.replace(
+                                    "container/pod_name: lamp-pod",
+                                    "name: lamp-pod",
+                                )
+
+                                # deterministic_repaired = deterministic_repaired.replace(
+                                #     "/home/vboxuser/containers/html:/var/www/html",
+                                #     "/home/vboxuser/containers/html:/var/www/html:Z",
+                                # )
+
+                                deterministic_repaired = deterministic_repaired.replace(
+                                    "publish_port_map:",
+                                    "publish:",
+                                )
+
+                                if deterministic_repaired != regenerated:
+                                    print("===== DETERMINISTIC POST-REPAIR FIX =====")
+
+                                    if "publish_port_map:" in regenerated:
+                                        print(
+                                            "Replace: publish_port_map:"
+                                        )
+                                        print(
+                                            "With:    publish:"
+                                        )
+
+                                    if "container/pod_name: lamp-pod" in regenerated:
+                                        print(
+                                            "Replace: container/pod_name: lamp-pod"
+                                        )
+                                        print(
+                                            "With:    name: lamp-pod"
+                                        )
+
+                                    regenerated = deterministic_repaired
+
+                                    # 修正後にもう一度Contract Validator
+                                    try:
+                                        parsed_yaml = yaml.safe_load(regenerated)
+                                        contract_errors = (
+                                            validate_infrastructure_playbook_contract(
+                                                parsed_yaml
+                                            )
+                                        )
+                                    except Exception as e:
+                                        contract_errors = [
+                                            f"Invalid YAML after deterministic repair: {e}"
+                                        ]
+
+                                if contract_errors:
+                                    print("===== REPAIR CONTRACT STILL INVALID =====")
+                                    for error in contract_errors:
+                                        print(f"- {error}")
+
+                                    raise RuntimeError(
+                                        "AI Repair produced an invalid infrastructure "
+                                        "playbook contract."
+                                    )
+
+                                print("AI Repair result passed after deterministic repair.")
+                                
+                        safe_write_file(
+                            SAFE_ROOT,
+                            repair_target,
+                            regenerated,
+                        )
+
+                        print(
+                            f"Regenerated file written to SAFE_ROOT: "
+                            f"{repair_target}"
+                        )
 
                 except Exception as e:
                     print("Auto-repair regeneration failed:", e)
-                    # If regeneration fails, propagate as unknown deploy error
-                    raise RuntimeError(f"Unknown deploy error.\n{deploy_result['stderr']}")
+                    raise RuntimeError(
+                        f"Unknown deploy error.\n"
+                        f"{deploy_result['stderr']}"
+                    )
 
             print("\n===== SCP TO ANSIBLE CONTROL NODE =====")
             run_command([
@@ -3171,214 +3578,214 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
                 })
                 return True
 
-        # Certain diagnosed root causes should trigger an automatic
-        # repair attempt instead of immediately raising an exception.
-        root = deploy_diagnosis.get("root_cause")
-        auto_repair_root_causes = {
-            "browser_connection_error",
-            "browser_status",
-            "pod_not_running",
-            "apache_not_running",
-            "container_not_running",
-            "playbook_error",
-            "ansible_module_error",
-        }
+        # # Certain diagnosed root causes should trigger an automatic
+        # # repair attempt instead of immediately raising an exception.
+        # root = deploy_diagnosis.get("root_cause")
+        # auto_repair_root_causes = {
+        #     "browser_connection_error",
+        #     "browser_status",
+        #     "pod_not_running",
+        #     "apache_not_running",
+        #     "container_not_running",
+        #     "playbook_error",
+        #     "ansible_module_error",
+        # }
 
-        if root in auto_repair_root_causes:
-            print(f"\n===== AUTO-REPAIR TRIGGERED FOR: {root} =====")
+        # if root in auto_repair_root_causes:
+        #     print(f"\n===== AUTO-REPAIR TRIGGERED FOR: {root} =====")
 
-            # Perform AI-driven repair of the diagnosed target (e.g. playbook)
-            file_to_repair = (
-                deploy_diagnosis.get("repair_target")
-                or "ansible/playbook.yml"
-            )
+        #     # Perform AI-driven repair of the diagnosed target (e.g. playbook)
+        #     file_to_repair = (
+        #         deploy_diagnosis.get("repair_target")
+        #         or "ansible/playbook.yml"
+        #     )
 
-            regeneration_context = {
-                "source": "deploy",
-                "errors": [deploy_diagnosis],
-                "stdout": deploy_result.get("stdout", ""),
-                "stderr": deploy_result.get("stderr", ""),
-                "evidence": deploy_evidence,
-                "diagnosis": deploy_diagnosis,
-            }
+        #     regeneration_context = {
+        #         "source": "deploy",
+        #         "errors": [deploy_diagnosis],
+        #         "stdout": deploy_result.get("stdout", ""),
+        #         "stderr": deploy_result.get("stderr", ""),
+        #         "evidence": deploy_evidence,
+        #         "diagnosis": deploy_diagnosis,
+        #     }
 
-            repair_attempts = 2
-            regenerated = None
+        #     repair_attempts = 2
+        #     regenerated = None
 
-            for repair_attempt in range(repair_attempts):
-                try:
-                    print(
-                        f"\n===== REGENERATE {file_to_repair} "
-                        f"USING AI (auto-repair {repair_attempt + 1}/{repair_attempts}) ====="
-                    )
+        #     for repair_attempt in range(repair_attempts):
+        #         try:
+        #             print(
+        #                 f"\n===== REGENERATE {file_to_repair} "
+        #                 f"USING AI (auto-repair {repair_attempt + 1}/{repair_attempts}) ====="
+        #             )
 
-                    regenerated = regenerate_file_with_context(
-                        file_to_repair,
-                        context["architecture"],
-                        regeneration_context,
-                        context["rules"],
-                        context["task_rules"],
-                        context["format_rules"],
-                    )
+        #             regenerated = regenerate_file_with_context(
+        #                 file_to_repair,
+        #                 context["architecture"],
+        #                 regeneration_context,
+        #                 context["rules"],
+        #                 context["task_rules"],
+        #                 context["format_rules"],
+        #             )
 
-                    if regenerated is None:
-                        raise RuntimeError(
-                            f"Regeneration returned None: {file_to_repair}"
-                        )
+        #             if regenerated is None:
+        #                 raise RuntimeError(
+        #                     f"Regeneration returned None: {file_to_repair}"
+        #                 )
 
-                    safe_write_file(
-                        SAFE_ROOT,
-                        file_to_repair,
-                        regenerated,
-                    )
+        #             safe_write_file(
+        #                 SAFE_ROOT,
+        #                 file_to_repair,
+        #                 regenerated,
+        #             )
 
-                    print(
-                        "Regenerated file written to SAFE_ROOT:",
-                        file_to_repair,
-                    )
+        #             print(
+        #                 "Regenerated file written to SAFE_ROOT:",
+        #                 file_to_repair,
+        #             )
 
-                    break
+        #             break
 
-                except Exception as e:
-                    print(
-                        f"Auto-repair attempt {repair_attempt + 1} failed: {e}"
-                    )
+        #         except Exception as e:
+        #             print(
+        #                 f"Auto-repair attempt {repair_attempt + 1} failed: {e}"
+        #             )
 
-                    if repair_attempt >= repair_attempts - 1:
-                        raise RuntimeError(
-                            f"Deploy auto repair failed while regenerating "
-                            f"{file_to_repair}: {e}"
-                        ) from e
+        #             if repair_attempt >= repair_attempts - 1:
+        #                 raise RuntimeError(
+        #                     f"Deploy auto repair failed while regenerating "
+        #                     f"{file_to_repair}: {e}"
+        #                 ) from e
 
-                    print(
-                        "Retrying auto-repair with deterministic "
-                        "contract feedback..."
-                    )
+        #             print(
+        #                 "Retrying auto-repair with deterministic "
+        #                 "contract feedback..."
+        #             )
 
 
-            # Transfer repaired files to control node and redeploy
-            print("\n===== SCP TO ANSIBLE CONTROL NODE (auto-repair) =====")
-            run_command([
-                "scp",
-                "-r",
-                str(SAFE_ROOT),
-                f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
-            ])
+        #     # Transfer repaired files to control node and redeploy
+        #     print("\n===== SCP TO ANSIBLE CONTROL NODE (auto-repair) =====")
+        #     run_command([
+        #         "scp",
+        #         "-r",
+        #         str(SAFE_ROOT),
+        #         f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
+        #     ])
 
-            print("===== REMOTE PLAYBOOK CHECK (auto-repair) =====")
-            print(run_remote_command(
-                ANSIBLE_CONTROL_NODE,
-                "cat /home/vboxuser/ai_driven/generated/files/ansible/playbook.yml"
-            ))
+        #     print("===== REMOTE PLAYBOOK CHECK (auto-repair) =====")
+        #     print(run_remote_command(
+        #         ANSIBLE_CONTROL_NODE,
+        #         "cat /home/vboxuser/ai_driven/generated/files/ansible/playbook.yml"
+        #     ))
 
-            print("\n===== REMOVE OLD POD (auto-repair) =====")
-            run_remote_command(
-                EXECUTION_NODE,
-                "podman pod rm -f lamp-pod || true"
-            )
+        #     print("\n===== REMOVE OLD POD (auto-repair) =====")
+        #     run_remote_command(
+        #         EXECUTION_NODE,
+        #         "podman pod rm -f lamp-pod || true"
+        #     )
 
-            print("\n===== REDEPLOY AFTER AUTO-REPAIR =====")
-            deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = (
-                perform_deploy_cycle()
-            )
+        #     print("\n===== REDEPLOY AFTER AUTO-REPAIR =====")
+        #     deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = (
+        #         perform_deploy_cycle()
+        #     )
 
-            print("===== PODMAN STATUS AFTER DEPLOY REPAIR =====")
-            print(run_remote_command(
-                EXECUTION_NODE,
-                "podman ps -a"
-            ))
+        #     print("===== PODMAN STATUS AFTER DEPLOY REPAIR =====")
+        #     print(run_remote_command(
+        #         EXECUTION_NODE,
+        #         "podman ps -a"
+        #     ))
 
-            if not deploy_success:
-                raise RuntimeError("Deploy failed after auto-repair.")
+        #     if not deploy_success:
+        #         raise RuntimeError("Deploy failed after auto-repair.")
 
-            # ---------------------------------------------------------
-            # Auto-repair後も、Web/PHPの実動作を再検証する。
-            #
-            # Ansibleのreturn code == 0だけでは、
-            # Webアプリケーションが正常とは判断しない。
-            # ---------------------------------------------------------
-            print("\n===== POST-REPAIR BROWSER VALIDATION =====")
-            browser_result = run_browser_validation()
-            browser_issues = analyze_browser_validation(browser_result)
+        #     # ---------------------------------------------------------
+        #     # Auto-repair後も、Web/PHPの実動作を再検証する。
+        #     #
+        #     # Ansibleのreturn code == 0だけでは、
+        #     # Webアプリケーションが正常とは判断しない。
+        #     # ---------------------------------------------------------
+        #     print("\n===== POST-REPAIR BROWSER VALIDATION =====")
+        #     browser_result = run_browser_validation()
+        #     browser_issues = analyze_browser_validation(browser_result)
 
-            print(json.dumps(
-                browser_result,
-                indent=2,
-                ensure_ascii=False,
-            ))
+        #     print(json.dumps(
+        #         browser_result,
+        #         indent=2,
+        #         ensure_ascii=False,
+        #     ))
 
-            print(
-                "Browser issues:",
-                json.dumps(browser_issues, ensure_ascii=False)
-            )
+        #     print(
+        #         "Browser issues:",
+        #         json.dumps(browser_issues, ensure_ascii=False)
+        #     )
 
-            print("\n===== POST-REPAIR PHP LINT =====")
-            lint_result = run_php_lint()
-            lint_issues = analyze_php_lint_result(lint_result)
+        #     print("\n===== POST-REPAIR PHP LINT =====")
+        #     lint_result = run_php_lint()
+        #     lint_issues = analyze_php_lint_result(lint_result)
 
-            print(json.dumps(
-                lint_result,
-                indent=2,
-                ensure_ascii=False,
-            ))
+        #     print(json.dumps(
+        #         lint_result,
+        #         indent=2,
+        #         ensure_ascii=False,
+        #     ))
 
-            print(
-                "PHP lint issues:",
-                json.dumps(lint_issues, ensure_ascii=False)
-            )
+        #     print(
+        #         "PHP lint issues:",
+        #         json.dumps(lint_issues, ensure_ascii=False)
+        #     )
 
-            # ---------------------------------------------------------
-            # Web/PHPともに正常なら初めて成功。
-            # ---------------------------------------------------------
-            if not browser_issues and not lint_issues:
-                print("Pipeline completed successfully after auto-repair")
+        #     # ---------------------------------------------------------
+        #     # Web/PHPともに正常なら初めて成功。
+        #     # ---------------------------------------------------------
+        #     if not browser_issues and not lint_issues:
+        #         print("Pipeline completed successfully after auto-repair")
 
-                context["deployment_contract"].update({
-                    "web_url": "http://192.168.122.10:8080",
-                    "db_host": "mysql",
-                    "db_port": 3306,
-                    "db_name": "testdb",
-                    "db_user": "root",
-                    "db_password": "secret",
-                })
+        #         context["deployment_contract"].update({
+        #             "web_url": "http://192.168.122.10:8080",
+        #             "db_host": "mysql",
+        #             "db_port": 3306,
+        #             "db_name": "testdb",
+        #             "db_user": "root",
+        #             "db_password": "secret",
+        #         })
 
-                return True
+        #         return True
 
-            # ---------------------------------------------------------
-            # Deploy自体は成功したが、実動作検証に失敗した。
-            # ここで成功扱いしてはいけない。
-            # ---------------------------------------------------------
-            print("\n=== POST-REPAIR VALIDATION FAILED ===")
+        #     # ---------------------------------------------------------
+        #     # Deploy自体は成功したが、実動作検証に失敗した。
+        #     # ここで成功扱いしてはいけない。
+        #     # ---------------------------------------------------------
+        #     print("\n=== POST-REPAIR VALIDATION FAILED ===")
 
-            combined_issues = browser_issues + lint_issues
-            primary_issue = combined_issues[0] if combined_issues else {}
+        #     combined_issues = browser_issues + lint_issues
+        #     primary_issue = combined_issues[0] if combined_issues else {}
 
-            deploy_diagnosis = {
-                "category": primary_issue.get(
-                    "category",
-                    "infrastructure"
-                ),
-                "root_cause": primary_issue.get(
-                    "type",
-                    "post_repair_validation_failed"
-                ),
-                "reason": primary_issue.get(
-                    "detail",
-                    "Post-repair browser or PHP validation failed."
-                ),
-                "confidence": 0.99,
-                "repair_hint": (
-                    f"Fix {primary_issue.get('repair_target', repair_target)}."
-                ),
-                "repair_target": primary_issue.get(
-                    "repair_target",
-                    repair_target
-                ),
-            }
+        #     deploy_diagnosis = {
+        #         "category": primary_issue.get(
+        #             "category",
+        #             "infrastructure"
+        #         ),
+        #         "root_cause": primary_issue.get(
+        #             "type",
+        #             "post_repair_validation_failed"
+        #         ),
+        #         "reason": primary_issue.get(
+        #             "detail",
+        #             "Post-repair browser or PHP validation failed."
+        #         ),
+        #         "confidence": 0.99,
+        #         "repair_hint": (
+        #             f"Fix {primary_issue.get('repair_target', repair_target)}."
+        #         ),
+        #         "repair_target": primary_issue.get(
+        #             "repair_target",
+        #             repair_target
+        #         ),
+        #     }
 
-            raise RuntimeError(
-                "Deploy completed but post-repair validation failed."
-            )
+            # raise RuntimeError(
+            #     "Deploy completed but post-repair validation failed."
+            # )
         raise RuntimeError("Deploy failed")
 
 def review_application(
@@ -3544,6 +3951,7 @@ def run_application_pipeline(
                     context["format_rules"],
                     SAFE_ROOT,
                     available_php_files=available_files,
+                    deployment_contract=context.get("deployment_contract", {}),
                 )
                 continue
 
@@ -3565,6 +3973,7 @@ def run_application_pipeline(
             context["task_rules"],
             context["format_rules"],
             SAFE_ROOT,
+            deployment_contract=context.get("deployment_contract", {}),
         )
 
     print("validation_success =", validation_success)

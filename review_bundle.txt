@@ -1,0 +1,1480 @@
+n===== MISSING: app_reviewer_rules.md =====n
+n===== MISSING: app_rules.md =====n
+n===== MISSING: architecture.md =====n
+n===== MISSING: infra_generation_rules.md =====n
+n===== MISSING: infra_reviewer_rules.md =====n
+n===== MISSING: infra_rules.md =====n
+n===== MISSING: output_format.md =====n
+n===== MISSING: repair_rules.md =====n
+n===== MISSING: reviewer_rules.md =====n
+n===== MISSING: roadmap.md =====n
+n===== MISSING: system_context.json =====n
+n===== MISSING: system_rules.md =====n
+n===== MISSING: task.md =====n
+n===== MISSING: ai_pipeline.py =====n
+n===== MISSING: app_php_cross_file_test.py =====n
+n===== MISSING: app_php_repair_test.py =====n
+n===== MISSING: app_pipeline_test.py =====n
+n===== MISSING: architecture.md =====n
+n===== MISSING: config.py =====n
+n===== MISSING: deploy.py =====n
+n===== MISSING: test_nothink.py =====n
+n===== MISSING: test_nothink_olmAPI.py =====n
+n===== MISSING: tmp_repro.py =====n
+n===== MISSING: utility.py =====n
+n===== MISSING: validation.py =====n
+n===== MISSING: ai_pipeline_20270728ソース分割前.py =====n
+n===== MISSING: ai_pipeline_backup20260524_1822.py =====n
+n===== MISSING: ai_pipeline_Backup20260718_DployOKまて.py =====n
+n===== MISSING: prePLtest.py =====n
+n===== MISSING: ai_pipeline.cpython-312.pyc =====n
+n===== MISSING: app_php_cross_file_test.cpython-312.pyc =====n
+n===== MISSING: app_php_repair_test.cpython-312.pyc =====n
+n===== MISSING: config.cpython-312.pyc =====n
+n===== MISSING: deploy.cpython-312.pyc =====n
+n===== MISSING: utility.cpython-312.pyc =====n
+n===== MISSING: validation.cpython-312.pyc =====n
+
+===== RUN TASK: infrastructure.md =====
+
+===== LOAD CONTEXT: infrastructure =====
+Context loaded
+
+===== GENERATE PROMPT =====
+Task Type = infrastructure
+Deployment Contract:
+{
+  "web_url": "http://192.168.122.10:8080",
+  "db_host": "mysql",
+  "db_port": 3306,
+  "db_name": "testdb",
+  "db_user": "root",
+  "db_password": "secret"
+}
+Prompt length = 11,143 chars
+
+===== GENERATE START =====
+Calling Ollama...
+SYSTEM PROMPT LENGTH = 2787
+USER PROMPT LENGTH = 11143
+MODEL = qwen3.5:9b
+Ollama returned (379.6s)
+Generate finished (379.6s)
+content = '{\n  "summary": "Generated ansible/playbook.yml with Podman tasks for lamp-pod (publishing port 8080:80), php container (pdo_mysql enabled via command), mysql container (testdb initialized), and copy task for index.php.",\n  "files": [\n    {\n      "path": "ansible/playbook.yml",\n      "content": "- name: Deploy LAMP Infrastructure\\n  hosts:\\n    - execution\\n  tasks:\\n    - name: Create lamp-pod pod\\n      containers.podman.podman_pod:\\n        container/pod_name: lamp-pod\\n        state: started\\n        publish:\\n          - \\"8080:80\\"\\n\\n    - name: Start PHP container in lamp-pod\\n      containers.podman.podman_container:\\n        name: php\\n        pod: lamp-pod\\n        image: php:8.2-apache\\n        state: started\\n        command:\\n          - sh\\n          - -c\\n          - docker-php-ext-install pdo_mysql && apache2-foreground\\n        env:\\n          db_host: mysql\\n          db_port: 3306\\n          db_name: testdb\\n          db_user: root\\n          db_password: secret\\n        volumes:\\n          - /home/vboxuser/containers/html:/var/www/html\\n\\n    - name: Start MySQL container in lamp-pod\\n      containers.podman.podman_container:\\n        name: mysql\\n        pod: lamp-pod\\n        image: mysql:8.0\\n        state: started\\n        env:\\n          MYSQL_ROOT_PASSWORD: secret\\n          MYSQL_DATABASE: testdb\\n\\n    - name: Copy index.php to host web root\\n      copy:\\n        src: ../src/index.php\\n        dest: /home/vboxuser/containers/html/index.php"\n    },\n    {\n      "path": "ansible/inventory.ini",\n      "content": "[execution]\\nrockey8\\n\\n[control]\\nasbsvr"\n    },\n    {\n      "path": "src/index.php",\n      "content": "<?php\\necho \\"Infrastructure OK\\";\\n?>"\n    }\n  ],\n  "commands": [],\n  "risks": []\n}'
+RAW LENGTH = 1752
+===== RAW TAIL =====
+{
+  "summary": "Generated ansible/playbook.yml with Podman tasks for lamp-pod (publishing port 8080:80), php container (pdo_mysql enabled via command), mysql container (testdb initialized), and copy task for index.php.",
+  "files": [
+    {
+      "path": "ansible/playbook.yml",
+      "content": "- name: Deploy LAMP Infrastructure\n  hosts:\n    - execution\n  tasks:\n    - name: Create lamp-pod pod\n      containers.podman.podman_pod:\n        container/pod_name: lamp-pod\n        state: started\n        publish:\n          - \"8080:80\"\n\n    - name: Start PHP container in lamp-pod\n      containers.podman.podman_container:\n        name: php\n        pod: lamp-pod\n        image: php:8.2-apache\n        state: started\n        command:\n          - sh\n          - -c\n          - docker-php-ext-install pdo_mysql && apache2-foreground\n        env:\n          db_host: mysql\n          db_port: 3306\n          db_name: testdb\n          db_user: root\n          db_password: secret\n        volumes:\n          - /home/vboxuser/containers/html:/var/www/html\n\n    - name: Start MySQL container in lamp-pod\n      containers.podman.podman_container:\n        name: mysql\n        pod: lamp-pod\n        image: mysql:8.0\n        state: started\n        env:\n          MYSQL_ROOT_PASSWORD: secret\n          MYSQL_DATABASE: testdb\n\n    - name: Copy index.php to host web root\n      copy:\n        src: ../src/index.php\n        dest: /home/vboxuser/containers/html/index.php"
+    },
+    {
+      "path": "ansible/inventory.ini",
+      "content": "[execution]\nrockey8\n\n[control]\nasbsvr"
+    },
+    {
+      "path": "src/index.php",
+      "content": "<?php\necho \"Infrastructure OK\";\n?>"
+    }
+  ],
+  "commands": [],
+  "risks": []
+}
+====================
+safe_write_file root=D:\Devlopment\ai_driven\generated\files relative_path=ansible/playbook.yml resolved=D:\Devlopment\ai_driven\generated\files\ansible\playbook.yml
+Generated: D:\Devlopment\ai_driven\generated\files\ansible\playbook.yml
+safe_write_file root=D:\Devlopment\ai_driven\generated\files relative_path=ansible/inventory.ini resolved=D:\Devlopment\ai_driven\generated\files\ansible\inventory.ini
+Generated: D:\Devlopment\ai_driven\generated\files\ansible\inventory.ini
+safe_write_file root=D:\Devlopment\ai_driven\generated\files relative_path=src/index.php resolved=D:\Devlopment\ai_driven\generated\files\src\index.php
+Generated: D:\Devlopment\ai_driven\generated\files\src\index.php
+
+===== REVIEW =====
+Attempt 1
+
+===== REVIEW INPUT PLAYBOOK =====
+- name: Deploy LAMP Infrastructure
+  hosts:
+    - execution
+  tasks:
+    - name: Create lamp-pod pod
+      containers.podman.podman_pod:
+        container/pod_name: lamp-pod
+        state: started
+        publish:
+          - "8080:80"
+
+    - name: Start PHP container in lamp-pod
+      containers.podman.podman_container:
+        name: php
+        pod: lamp-pod
+        image: php:8.2-apache
+        state: started
+        command:
+          - sh
+          - -c
+          - docker-php-ext-install pdo_mysql && apache2-foreground
+        env:
+          db_host: mysql
+          db_port: 3306
+          db_name: testdb
+          db_user: root
+          db_password: secret
+        volumes:
+          - /home/vboxuser/containers/html:/var/www/html
+
+    - name: Start MySQL container in lamp-pod
+      containers.podman.podman_container:
+        name: mysql
+        pod: lamp-pod
+        image: mysql:8.0
+        state: started
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: testdb
+
+    - name: Copy index.php to host web root
+      copy:
+        src: ../src/index.php
+        dest: /home/vboxuser/containers/html/index.php
+
+=== REVIEW ATTEMPT 1 ===
+Review request...
+REVIEW SYSTEM PROMPT LENGTH = 3492
+REVIEW USER PROMPT LENGTH = 19584
+===== REVIEW SYSTEM PROMPT TAIL =====
+arning compromises are allowed when the
+pipeline can proceed.
+
+## Review Boundary
+
+Review only the current task type and its supplied rules.
+
+Apply only requirements that are authoritative for the current task.
+
+Do not apply application requirements to Infrastructure artifacts
+unless the Infrastructure task explicitly requires them.
+
+Deterministic validation is authoritative for machine-checkable
+structural conditions.
+
+If Artifact Facts show that a structural condition is valid,
+do not reject it.
+
+Artifact Facts are machine-verified observations of the generated
+artifact.
+
+## Evidence Rule
+
+Before reporting a blocking problem:
+
+1. Identify the exact problem in the supplied artifact or validation evidence.
+2. Verify that the claimed element actually exists or is actually missing.
+3. Identify the corresponding artifact location or evidence.
+4. Confirm that the problem is a blocking condition under the supplied rules.
+
+If these conditions cannot be satisfied, do not report a blocking problem.
+
+Never create a blocking problem from an assumption,
+inference, imagined content, or expected-but-unseen configuration.
+
+In particular, do not report a destructive action unless the
+destructive action is actually present in the supplied artifact
+or explicitly supported by validation evidence.
+
+## Infrastructure Review
+
+For Infrastructure artifacts:
+
+- Inspect ansible/playbook.yml directly.
+- Use the supplied parsed Artifact Facts as structural evidence.
+- Do not reject valid YAML structure.
+- Do not reject hosts, tasks, Podman pod, PHP container,
+  MySQL container, index.php copy task, fixed paths, ports,
+  images, or container names when deterministic validation
+  has already confirmed them.
+
+Do not infer structural defects from indentation,
+formatting, key ordering, or abbreviated visual inspection.
+
+## Decision
+
+If a blocking problem exists:
+
+- approved = false
+- risks must contain at least one object with severity "BLOCKING"
+- diagnosis must identify the actual observed root cause
+
+If no blocking problem exists:
+
+- approved = true
+- risks must contain no BLOCKING risk
+- diagnosis must still be present
+
+Warnings are allowed only for non-blocking issues.
+
+## Diagnosis
+
+diagnosis MUST be a single JSON object.
+
+It MUST contain exactly:
+
+- category
+- root_cause
+- reason
+- confidence
+
+category must be one of:
+
+- application
+- deployment
+- configuration
+- infrastructure
+
+root_cause must be a string.
+
+reason must be a string.
+
+confidence must be a number between 0.0 and 1.0.
+
+Do not guess the root cause.
+
+## Output
+
+Return exactly one JSON object.
+
+The top-level object MUST contain exactly:
+
+- approved
+- summary
+- risks
+- diagnosis
+
+summary must be a short description of the review result.
+
+approved must be a boolean.
+
+risks must be an array.
+
+diagnosis must be an object containing exactly:
+
+- category
+- root_cause
+- reason
+- confidence
+
+Do not return:
+
+- files
+- commands
+- generated artifact content
+- YAML
+- Markdown
+- explanations outside JSON
+
+Return JSON only.
+=====================================
+Review finished (127.1s)
+
+=== REVIEW RAW ===
+{
+  "approved": true,
+  "summary": "The infrastructure artifact was reviewed and found viable for the current pipeline with no blocking problems identified.",
+  "risks": [],
+  "diagnosis": {
+    "category": "infrastructure",
+    "root_cause": "",
+    "reason": "No structural or semantic issues were observed in the generated artifact that would prevent validation, deployment, or runtime functionality. All required elements (hosts, tasks, containers) are present and correctly configured according to the Infrastructure Contract.",
+    "confidence": 1.0
+  }
+}
+
+===== REVIEW REQUEST FULL DEBUG =====
+
+        Generated JSON:
+
+        {"summary": "Generated ansible/playbook.yml with Podman tasks for lamp-pod (publishing port 8080:80), php container (pdo_mysql enabled via command), mysql container (testdb initialized), and copy task for index.php.", "files": [{"path": "ansible/playbook.yml", "content": "- name: Deploy LAMP Infrastructure\n  hosts:\n    - execution\n  tasks:\n    - name: Create lamp-pod pod\n      containers.podman.podman_pod:\n        container/pod_name: lamp-pod\n        state: started\n        publish:\n          - \"8080:80\"\n\n    - name: Start PHP container in lamp-pod\n      containers.podman.podman_container:\n        name: php\n        pod: lamp-pod\n        image: php:8.2-apache\n        state: started\n        command:\n          - sh\n          - -c\n          - docker-php-ext-install pdo_mysql && apache2-foreground\n        env:\n          db_host: mysql\n          db_port: 3306\n          db_name: testdb\n          db_user: root\n          db_password: secret\n        volumes:\n          - /home/vboxuser/containers/html:/var/www/html\n\n    - name: Start MySQL container in lamp-pod\n      containers.podman.podman_container:\n        name: mysql\n        pod: lamp-pod\n        image: mysql:8.0\n        state: started\n        env:\n          MYSQL_ROOT_PASSWORD: secret\n          MYSQL_DATABASE: testdb\n\n    - name: Copy index.php to host web root\n      copy:\n        src: ../src/index.php\n        dest: /home/vboxuser/containers/html/index.php"}, {"path": "ansible/inventory.ini", "content": "[control]\nasbsvr\n\n[execution]\nrockey8\n"}, {"path": "src/index.php", "content": "<?php\necho \"Infrastructure OK\";\n?>\n"}], "commands": [], "risks": []}
+
+        Artifact Facts:
+        YAML parse: success
+Play count: 1
+Play 0 hosts: ['execution']
+Play 0 tasks count: 4
+Play 0 task names: ['Create lamp-pod pod', 'Start PHP container in lamp-pod', 'Start MySQL container in lamp-pod', 'Copy index.php to host web root']
+
+        Project Rules:
+        # context/system_rules.md
+
+# System Rules
+
+- Generate only requested files.
+- Do not generate destructive commands.
+- Do not invent technologies, files, parameters, or configuration.
+- Preserve valid existing configuration.
+- Modify only the requested scope.
+- Use UTF-8.
+- Structured output must contain no explanatory prose.
+
+
+        Task Rules:
+        # context/infra_rules.md
+
+# Infrastructure Rules
+
+## Scope
+
+These rules apply to the Infrastructure artifact:
+
+ansible/playbook.yml
+
+The Infrastructure layer is responsible for creating and configuring the LAMP runtime with Ansible and Podman.
+
+The Infrastructure layer must provide the runtime resources required by the Deployment Contract.
+
+Do not add application business logic to the Infrastructure playbook.
+
+---
+
+## Fixed Values
+
+Use these values exactly unless validation evidence explicitly requires a change.
+
+| Item                    | Value                          |
+| ----------------------- | ------------------------------ |
+| Ansible target group    | execution                      |
+| Pod name                | lamp-pod                       |
+| PHP container           | php                            |
+| MySQL container         | mysql                          |
+| PHP image               | php:8.2-apache                 |
+| MySQL image             | mysql:8.0                      |
+| Host web port           | 8080                           |
+| Container web port      | 80                             |
+| Host HTML directory     | /home/vboxuser/containers/html |
+| Container document root | /var/www/html                  |
+| MySQL port              | 3306                           |
+| Database                | testdb                         |
+| Database user           | root                           |
+| Database password       | secret                         |
+
+These values are part of the learning environment contract.
+
+---
+
+## Ansible Playbook Structure
+
+ansible/playbook.yml must be a valid Ansible playbook.
+
+Requirements:
+
+- YAML must be parseable by yaml.safe_load().
+- The YAML root must be a list of plays.
+- The play must target the execution inventory group.
+- Tasks must be under the play's tasks list.
+- hosts and tasks must be siblings.
+- Do not create a top-level plays key.
+- Do not create a top-level playbook key.
+- Do not represent each task as a separate play.
+- Use Ansible and Podman.
+
+Required structure:
+
+- name: Play name
+  hosts:
+  - execution
+    tasks:
+  - name: Task name
+    module.name:
+    ...
+
+---
+
+## Podman Modules
+
+Use these Ansible modules:
+
+- containers.podman.podman_pod
+- containers.podman.podman_container
+
+Do not change to Docker Compose.
+
+Do not invent Podman module parameters.
+
+Do not use shell or command modules for container management.
+
+Do not use podman exec.
+
+---
+
+## Pod Configuration
+
+The web port must be published by the Pod.
+
+The Pod must use:
+
+state: started
+
+The published port must be:
+
+publish:
+
+- "8080:80"
+
+The port publication belongs to containers.podman.podman_pod.
+
+Do not define publish on containers that belong to the shared Pod.
+
+Do not add a second Podman task later to configure the Pod port.
+
+---
+
+## Container Configuration
+
+The PHP and MySQL containers must belong to:
+
+pod: lamp-pod
+
+Both required containers must use:
+
+state: started
+
+PHP must use:
+
+image: php:8.2-apache
+name: php
+
+MySQL must use:
+
+image: mysql:8.0
+name: mysql
+
+Do not define published host ports on the PHP or MySQL containers.
+
+---
+
+## Environment Variables
+
+Use the Ansible parameter:
+
+env:
+
+Do not use:
+
+environment:
+
+Environment variable values required by the Deployment Contract must come from the Deployment Contract when the value is supplied there.
+
+Do not invent, infer, replace, or modify Deployment Contract values.
+
+---
+
+## MySQL Runtime
+
+The MySQL container must provide the database required by the Deployment Contract.
+
+For the current Learning Phase environment, the required database is:
+
+testdb
+
+The MySQL container must initialize that database.
+
+The MySQL container must preserve:
+
+MYSQL_ROOT_PASSWORD: secret
+
+The database initialization configuration must correspond to the database name defined by the Deployment Contract.
+
+Do not invent additional database names.
+
+Do not invent additional database credentials.
+
+The MySQL service must remain:
+
+image: mysql:8.0
+pod: lamp-pod
+name: mysql
+state: started
+
+---
+
+## PHP Runtime
+
+The PHP container must receive the database values required by the Deployment Contract.
+
+The following environment variable names are mandatory:
+
+- db_host
+- db_port
+- db_name
+- db_user
+- db_password
+
+Their values must come from the Deployment Contract provided to the Infrastructure Generate prompt.
+
+The PHP application reads these values using getenv().
+
+The PHP container must provide PDO MySQL support.
+
+The PHP container must remain based on:
+
+php:8.2-apache
+
+For the Learning Phase, PDO MySQL may be enabled by using the container startup command:
+
+command:
+
+- sh
+- -c
+- docker-php-ext-install pdo_mysql && apache2-foreground
+
+Do not change the PHP image.
+
+Do not introduce a Dockerfile or Containerfile in the Learning Phase.
+
+Do not use Ansible shell or command modules to execute podman exec, container management commands, or runtime installation commands.
+
+The PHP container must remain a member of:
+
+lamp-pod
+
+The PHP web service must continue to listen on container port 80 and be published through the Pod as:
+
+8080:80
+
+---
+
+## PHP Container
+
+The PHP container must serve files from:
+
+/var/www/html
+
+The host directory:
+
+/home/vboxuser/containers/html
+
+must be bind-mounted to:
+
+/var/www/html
+
+The generated application file is:
+
+src/index.php
+
+Its validation content is the responsibility of the application artifact, not the Infrastructure playbook.
+
+---
+
+## Application File Deployment
+
+The generated project layout is:
+
+generated/files/
+
+├── ansible/
+│ ├── playbook.yml
+│ └── inventory.ini
+└── src/
+└── index.php
+
+playbook.yml is located under ansible/.
+
+Therefore, when Ansible copy uses src relative to the playbook directory, the source path for index.php is:
+
+../src/index.php
+
+Do not use:
+
+src/index.php
+
+for this layout.
+
+The copy task runs on the execution host, not inside the PHP container.
+
+Therefore the destination must be:
+
+/home/vboxuser/containers/html/index.php
+
+Do not use the container-only path:
+
+/var/www/html/index.php
+
+for the Ansible host-side copy destination.
+
+The resulting file must become available inside the PHP container at:
+
+/var/www/html/index.php
+
+through the bind mount.
+
+The index.php copy task must not use a when condition.
+
+---
+
+## YAML and Jinja Syntax
+
+Jinja expressions used as complete YAML scalar values must be written in a YAML-safe form.
+
+For example:
+
+name: "{{ pod_name }}"
+
+Do not generate malformed YAML by using invalid Jinja expression syntax.
+
+---
+
+## Minimal Change Rule
+
+When repairing an existing playbook:
+
+- Preserve valid existing configuration.
+- Change only what is required by the validation evidence.
+- Do not redesign the playbook.
+- Do not change fixed values without evidence.
+- Do not duplicate a configuration to compensate for an invalid configuration.
+- If a setting must be moved, replace the invalid location rather than keeping both.
+
+
+        Review Rules:
+        # Review Rules
+
+Review for pipeline viability, not perfect production quality.
+
+Approve when no blocking problem exists.
+
+Reject only when the artifact:
+
+- breaks the pipeline
+- exposes secrets beyond the explicitly defined learning-environment values
+- contains destructive actions
+- uses unsupported parameters
+- has a clear syntax or configuration failure
+- violates an explicit task rule
+- violates a task-specific review rule
+
+Allow temporary local-learning compromises when the pipeline can proceed.
+
+## Review Responsibility
+
+Review evaluates whether the generated artifact is acceptable before validation and execution.
+
+Review must identify blocking structural problems when they are visible from the generated artifact.
+
+Validation remains responsible for deterministic machine-checkable validation.
+
+Do not approve an artifact that is clearly structurally invalid merely because the failure would later be detected by validation.
+
+## Root Cause
+
+When diagnosis is required:
+
+- identify the actual observed problem
+- do not guess
+- do not report a downstream symptom as the root cause when the upstream artifact is already invalid
+
+## Repair
+
+During repair:
+
+- preserve valid existing content
+- change only what is necessary to resolve the reported problem
+- do not rewrite unrelated content
+- do not redesign the system
+- required missing structure may be added
+- return the complete corrected file
+
+Warnings are for non-blocking issues.
+
+Blocking problems must be represented as:
+
+{
+"severity": "BLOCKING"
+}
+
+## Diagnosis
+
+- diagnosis MUST be a single JSON object.
+- Do NOT return diagnosis as an array.
+- diagnosis represents the primary/root cause of the review result.
+- category must be one of:
+  application, deployment, configuration, infrastructure.
+- root_cause must be a string.
+- reason must be a string.
+- confidence must be a number between 0 and 1.
+- Do not use percentage values such as 95.
+
+Before deciding approved, check every Blocking Problem listed in the Task Review Rules against the generated artifact.
+
+If any Blocking Problem is present:
+
+- approved must be false.
+- risks must include a risk with severity "BLOCKING".
+- diagnosis.root_cause must describe the observed blocking problem.
+
+If no Blocking Problem is present:
+
+- approved may be true.
+
+## Artifact Fact Verification
+
+Artifact Facts are machine-verified observations of the generated artifact.
+Use them when determining whether an element is present or absent.
+Do not report an element as missing when Artifact Facts show that it exists.
+
+Before reporting a blocking problem, verify the claimed problem against the actual Generated JSON artifact.
+
+Do not report a missing key, value, task, file, or configuration when it is present in the generated artifact.
+
+For infrastructure reviews:
+
+- Inspect ansible/playbook.yml directly.
+- Verify the actual play structure before reporting configuration problems.
+- A play targeting the execution group must contain hosts: execution.
+- Do not infer that hosts is missing from formatting, indentation, or abbreviated inspection.
+- Do not report a Jinja syntax problem unless an actual Jinja expression is present in the generated artifact.
+
+When a blocking problem is reported:
+
+- The diagnosis must describe an actual observed problem in the artifact.
+- The reviewer must be able to identify the corresponding location in the artifact.
+- Do not create a blocking problem from an assumption or inferred structure.
+- Apply only the contract that is authoritative for the current task type.
+- Do not apply application-level requirements to an infrastructure review
+  unless the infrastructure task explicitly requires those application-level
+  requirements.
+- Do not treat requirements defined only for the application task as
+  infrastructure artifact requirements.
+
+  ## Output
+
+Review result MUST contain the following top-level keys:
+
+- approved
+- summary
+- risks
+- diagnosis
+
+summary must be a short description of the review result.
+
+approved must be a boolean.
+
+risks must contain the identified review risks.
+
+diagnosis must be a single JSON object as defined in the Diagnosis section.
+
+
+        Task Review Rules:
+        # context/infra_reviewer_rules.md
+
+# Infrastructure Review Rules
+
+Review Infrastructure artifacts only.
+
+## Review Objective
+
+Determine whether the generated Infrastructure artifacts are viable for the current pipeline.
+
+Do not review for production perfection.
+
+Reject blocking problems that prevent validation, deployment or browser validation.
+
+## Blocking Problems
+
+Reject only problems that remain after deterministic
+Infrastructure Contract validation.
+
+Blocking problems may include:
+
+- unsupported Ansible parameter
+- Podman module usage that is incompatible with the project rules
+- destructive actions
+- infrastructure configuration that clearly prevents deployment
+- infrastructure configuration that clearly prevents runtime validation
+- PHP runtime configuration that cannot provide required infrastructure functionality
+- application logic incorrectly included in Infrastructure `src/index.php`
+- security or configuration problems explicitly identified by supplied validation evidence
+
+Do NOT reject the artifact for deterministic structural conditions
+that are already validated by the pipeline.
+
+Do NOT independently reject:
+
+- missing `hosts`
+- missing `hosts: execution`
+- missing `tasks`
+- invalid task nesting
+- missing Podman pod
+- missing PHP container
+- missing MySQL container
+- missing index.php copy task
+- missing inventory entries
+- fixed image values
+- fixed port values
+
+when those conditions have already been checked by deterministic
+validation.
+
+## Context for Review
+
+The following are fixed Infrastructure Contract values already
+validated by the pipeline.
+
+Use these values only when evaluating a remaining semantic,
+deployment, or runtime issue.
+
+Do not perform independent structural validation of these values.
+
+Pod: lamp-pod
+PHP container: php
+MySQL container: mysql
+PHP image: php:8.2-apache
+MySQL image: mysql:8.0
+Web root: /var/www/html
+Host web path: /home/vboxuser/containers/html
+Web publish: 8080:80
+Inventory:
+[control]
+asbsvr
+
+[execution]
+rockey8
+
+## Deployment Context
+
+Web: host port 8080 mapped to container port 80
+Database: mysql:3306
+
+These values are supplied as deployment context.
+
+Do not independently reject the artifact because of these values
+when deterministic validation has already confirmed the contract.
+
+Do not infer application-level configuration requirements from
+the Infrastructure Deployment Contract.
+
+## Review Decision
+
+If a blocking problem exists:
+
+"approved": false
+
+and the corresponding risk must have:
+
+"severity": "BLOCKING"
+
+Do not approve a blocking problem as a warning.
+
+If no blocking problem exists:
+
+"approved": true
+
+Warnings are allowed only for non-blocking issues.
+
+## Root Cause
+
+The diagnosis must describe the actual observed problem.
+
+Do not invent a root cause from assumptions.
+
+If the artifact has an invalid Ansible structure, report the structural problem.
+
+Do not report a downstream runtime problem as the root cause when the artifact cannot yet reach runtime validation.
+
+## Repair Compatibility
+
+Review must allow a Repair AI to add required missing structure.
+
+Do not classify the addition of required structural elements as an unnecessary redesign.
+
+For example:
+
+- adding `hosts: execution` to a play that lacks it
+- adding `tasks:` around existing tasks
+- moving existing task definitions under the required `tasks` list
+
+are valid repairs when the validation evidence requires them.
+
+## Evidence-Based Review
+
+Review the actual generated artifact provided to you.
+
+Do not report a violation unless the violation is directly observable
+in the artifact or explicitly supported by the supplied validation evidence.
+
+## Deterministic Validation Boundary
+
+Infrastructure artifact structure is validated separately by the
+pipeline's deterministic Infrastructure Contract validation.
+
+The following structural items are deterministic validation
+responsibilities and must NOT be independently rejected by the
+Reviewer when the supplied artifact facts or parsed artifact show
+that they are valid:
+
+- YAML parseability
+- play list structure
+- hosts
+- tasks
+- required Podman pod structure
+- required PHP container structure
+- required MySQL container structure
+- required index.php copy task
+- required fixed paths, ports, images, container names and values
+
+The Reviewer must use the supplied artifact facts and actual
+generated artifact as evidence.
+
+If a required structural element is explicitly present in the
+artifact, treat it as present.
+
+For example:
+
+hosts:
+
+- execution
+
+means that the play has a hosts value targeting the execution group.
+
+Do NOT report:
+
+- "missing hosts"
+- "missing execution target"
+- "missing tasks"
+- "task outside tasks"
+
+when the corresponding structure is present in the parsed artifact.
+
+Do not reconstruct or reinterpret valid parsed YAML from its visual
+formatting.
+
+Do not infer structural defects from indentation style, key ordering,
+line wrapping, or textual appearance when the parsed YAML structure
+is valid.
+
+Do not invent variables, Jinja expressions, modules, keys, paths,
+ports, containers, or configuration values.
+
+The Reviewer should report only problems that are directly observable
+in the artifact or explicitly supported by supplied validation
+evidence.
+
+If the deterministic validation evidence and the reviewer's
+interpretation disagree, do not invent a blocking structural problem.
+
+Before reporting a missing key, verify that the key is actually absent.
+Do not report a structural violation based solely on the textual
+appearance of YAML.
+
+When necessary, evaluate the parsed YAML structure rather than
+relying on visual indentation or formatting.
+
+Before reporting an invalid Ansible task structure, verify that
+the task is not nested under the play's "tasks:" key.
+
+The following structure is valid and must NOT be reported as a violation:
+
+- name: Example
+  hosts:
+  - execution
+    tasks:
+  - name: Example task
+    ansible.builtin.debug:
+    msg: "example"
+
+Do not infer structural problems from formatting, indentation style,
+or key ordering when the parsed YAML structure is valid.
+
+
+        Review the generated artifact according to the supplied rules.
+        Return JSON only.
+        
+====================================
+remove_all_files NOT FOUND IN REVIEW REQUEST
+
+Review passed
+
+Saved logs
+SAFE_ROOT = D:\Devlopment\ai_driven\generated\files
+
+===== FILE ===== ansible/playbook.yml
+===== YAML INPUT =====
+- name: Deploy LAMP Infrastructure
+  hosts:
+    - execution
+  tasks:
+    - name: Create lamp-pod pod
+      containers.podman.podman_pod:
+        container/pod_name: lamp-pod
+        state: started
+        publish:
+          - "8080:80"
+
+    - name: Start PHP container in lamp-pod
+      containers.podman.podman_container:
+        name: php
+        pod: lamp-pod
+        image: php:8.2-apache
+        state: started
+        command:
+          - sh
+          - -c
+          - docker-php-ext-install pdo_mysql && apache2-foreground
+        env:
+          db_host: mysql
+          db_port: 3306
+          db_name: testdb
+          db_user: root
+          db_password: secret
+        volumes:
+          - /home/vboxuser/containers/html:/var/www/html
+
+    - name: Start MySQL container in lamp-pod
+      containers.podman.podman_container:
+        name: mysql
+        pod: lamp-pod
+        image: mysql:8.0
+        state: started
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: testdb
+
+    - name: Copy index.php to host web root
+      copy:
+        src: ../src/index.php
+        dest: /home/vboxuser/containers/html/index.php
+Decoded size : 1150
+===== BEFORE WRITE =====
+'- name: Deploy LAMP Infrastructure\n  hosts:\n    - execution\n  tasks:\n    - name: Create lamp-pod pod\n      containers.podman.podman_pod:\n        container/pod_name: lamp-pod\n        state: started\n        publish:\n          - "8080:80"\n\n    - name: Start PHP container in lamp-pod\n      containers.podman.podman_container:\n        name: php\n        pod: lamp-pod\n        image: php:8.2-apache\n        state: started\n        command:\n          - sh\n          - -c\n          - docker-php-ext-install pdo_mysql && apache2-foreground\n        env:\n          db_host: mysql\n          db_port: 3306\n          db_name: testdb\n          db_user: root\n          db_password: secret\n        volumes:\n          - /home/vboxuser/containers/html:/var/www/html\n\n    - name: Start MySQL container in lamp-pod\n      containers.podman.podman_container:\n        name: mysql\n        pod: lamp-pod\n        image: mysql:8.0\n        state: started\n        env:\n          MYSQL_ROOT_PASSWORD: secret\n          MYSQL_DATABASE: testdb\n\n    - name: Copy index.php to host web root\n      copy:\n        src: ../src/index.php\n        dest: /home/vboxuser/containers/html/index.php'
+safe_write_file root=D:\Devlopment\ai_driven\generated\files relative_path=ansible/playbook.yml resolved=D:\Devlopment\ai_driven\generated\files\ansible\playbook.yml
+Generated: D:\Devlopment\ai_driven\generated\files\ansible\playbook.yml
+===== AFTER WRITE =====
+'- name: Deploy LAMP Infrastructure\n  hosts:\n    - execution\n  tasks:\n    - name: Create lamp-pod pod\n      containers.podman.podman_pod:\n        container/pod_name: lamp-pod\n        state: started\n        publish:\n          - "8080:80"\n\n    - name: Start PHP container in lamp-pod\n      containers.podman.podman_container:\n        name: php\n        pod: lamp-pod\n        image: php:8.2-apache\n        state: started\n        command:\n          - sh\n          - -c\n          - docker-php-ext-install pdo_mysql && apache2-foreground\n        env:\n          db_host: mysql\n          db_port: 3306\n          db_name: testdb\n          db_user: root\n          db_password: secret\n        volumes:\n          - /home/vboxuser/containers/html:/var/www/html\n\n    - name: Start MySQL container in lamp-pod\n      containers.podman.podman_container:\n        name: mysql\n        pod: lamp-pod\n        image: mysql:8.0\n        state: started\n        env:\n          MYSQL_ROOT_PASSWORD: secret\n          MYSQL_DATABASE: testdb\n\n    - name: Copy index.php to host web root\n      copy:\n        src: ../src/index.php\n        dest: /home/vboxuser/containers/html/index.php'
+
+===== FILE ===== ansible/inventory.ini
+Decoded size : 38
+===== BEFORE WRITE =====
+'[control]\nasbsvr\n\n[execution]\nrockey8\n'
+safe_write_file root=D:\Devlopment\ai_driven\generated\files relative_path=ansible/inventory.ini resolved=D:\Devlopment\ai_driven\generated\files\ansible\inventory.ini
+Generated: D:\Devlopment\ai_driven\generated\files\ansible\inventory.ini
+===== AFTER WRITE =====
+'[control]\nasbsvr\n\n[execution]\nrockey8\n'
+
+===== FILE ===== src/index.php
+Decoded size : 35
+===== BEFORE WRITE =====
+'<?php\necho "Infrastructure OK";\n?>\n'
+safe_write_file root=D:\Devlopment\ai_driven\generated\files relative_path=src/index.php resolved=D:\Devlopment\ai_driven\generated\files\src\index.php
+Generated: D:\Devlopment\ai_driven\generated\files\src\index.php
+===== AFTER WRITE =====
+'<?php\necho "Infrastructure OK";\n?>\n'
+
+===== SAVED ARTIFACT CHECK =====
+
+--- ansible\playbook.yml ---
+- name: Deploy LAMP Infrastructure
+  hosts:
+    - execution
+  tasks:
+    - name: Create lamp-pod pod
+      containers.podman.podman_pod:
+        container/pod_name: lamp-pod
+        state: started
+        publish:
+          - "8080:80"
+
+    - name: Start PHP container in lamp-pod
+      containers.podman.podman_container:
+        name: php
+        pod: lamp-pod
+        image: php:8.2-apache
+        state: started
+        command:
+          - sh
+          - -c
+          - docker-php-ext-install pdo_mysql && apache2-foreground
+        env:
+          db_host: mysql
+          db_port: 3306
+          db_name: testdb
+          db_user: root
+          db_password: secret
+        volumes:
+          - /home/vboxuser/containers/html:/var/www/html
+
+    - name: Start MySQL container in lamp-pod
+      containers.podman.podman_container:
+        name: mysql
+        pod: lamp-pod
+        image: mysql:8.0
+        state: started
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: testdb
+
+    - name: Copy index.php to host web root
+      copy:
+        src: ../src/index.php
+        dest: /home/vboxuser/containers/html/index.php
+
+--- ansible\inventory.ini ---
+[control]
+asbsvr
+
+[execution]
+rockey8
+
+
+--- src\index.php ---
+<?php
+echo "Infrastructure OK";
+?>
+
+
+=== VALIDATION ===
+
+===== VALIDATION ATTEMPT 1 =====
+RETURN ERROR COUNT = 0
+ERROR COUNT = 0
+Validation success attempt=1
+- name: Deploy LAMP Infrastructure
+  hosts:
+    - execution
+  tasks:
+    - name: Create lamp-pod pod
+      containers.podman.podman_pod:
+        container/pod_name: lamp-pod
+        state: started
+        publish:
+          - "8080:80"
+
+    - name: Start PHP container in lamp-pod
+      containers.podman.podman_container:
+        name: php
+        pod: lamp-pod
+        image: php:8.2-apache
+        state: started
+        command:
+          - sh
+          - -c
+          - docker-php-ext-install pdo_mysql && apache2-foreground
+        env:
+          db_host: mysql
+          db_port: 3306
+          db_name: testdb
+          db_user: root
+          db_password: secret
+        volumes:
+          - /home/vboxuser/containers/html:/var/www/html
+
+    - name: Start MySQL container in lamp-pod
+      containers.podman.podman_container:
+        name: mysql
+        pod: lamp-pod
+        image: mysql:8.0
+        state: started
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: testdb
+
+    - name: Copy index.php to host web root
+      copy:
+        src: ../src/index.php
+        dest: /home/vboxuser/containers/html/index.php
+===== SCP TO ANSIBLE CONTROL NODE =====
+===== REMOTE PLAYBOOK CHECK =====
+(0, '- name: Deploy LAMP Infrastructure\n  hosts:\n    - execution\n  tasks:\n    - name: Create lamp-pod pod\n      containers.podman.podman_pod:\n        container/pod_name: lamp-pod\n        state: started\n        publish:\n          - "8080:80"\n\n    - name: Start PHP container in lamp-pod\n      containers.podman.podman_container:\n        name: php\n        pod: lamp-pod\n        image: php:8.2-apache\n        state: started\n        command:\n          - sh\n          - -c\n          - docker-php-ext-install pdo_mysql && apache2-foreground\n        env:\n          db_host: mysql\n          db_port: 3306\n          db_name: testdb\n          db_user: root\n          db_password: secret\n        volumes:\n          - /home/vboxuser/containers/html:/var/www/html\n\n    - name: Start MySQL container in lamp-pod\n      containers.podman.podman_container:\n        name: mysql\n        pod: lamp-pod\n        image: mysql:8.0\n        state: started\n        env:\n          MYSQL_ROOT_PASSWORD: secret\n          MYSQL_DATABASE: testdb\n\n    - name: Copy index.php to host web root\n      copy:\n        src: ../src/index.php\n        dest: /home/vboxuser/containers/html/index.php', '')
+======= REMOTE VALIDATION =======
+- name: Deploy LAMP Infrastructure
+  hosts:
+    - execution
+  tasks:
+    - name: Create lamp-pod pod
+      containers.podman.podman_pod:
+        container/pod_name: lamp-pod
+        state: started
+        publish:
+          - "8080:80"
+
+    - name: Start PHP container in lamp-pod
+      containers.podman.podman_container:
+        name: php
+        pod: lamp-pod
+        image: php:8.2-apache
+        state: started
+        command:
+          - sh
+          - -c
+          - docker-php-ext-install pdo_mysql && apache2-foreground
+        env:
+          db_host: mysql
+          db_port: 3306
+          db_name: testdb
+          db_user: root
+          db_password: secret
+        volumes:
+          - /home/vboxuser/containers/html:/var/www/html
+
+
+
+Validation passed
+- name: Deploy LAMP Infrastructure
+  hosts:
+    - execution
+  tasks:
+    - name: Create lamp-pod pod
+      containers.podman.podman_pod:
+        container/pod_name: lamp-pod
+        state: started
+        publish:
+          - "8080:80"
+
+    - name: Start PHP container in lamp-pod
+      containers.podman.podman_container:
+        name: php
+        pod: lamp-pod
+        image: php:8.2-apache
+        state: started
+        command:
+          - sh
+          - -c
+          - docker-php-ext-install pdo_mysql && apache2-foreground
+        env:
+          db_host: mysql
+          db_port: 3306
+          db_name: testdb
+          db_user: root
+          db_password: secret
+        volumes:
+          - /home/vboxuser/containers/html:/var/www/html
+
+    - name: Start MySQL container in lamp-pod
+      containers.podman.podman_container:
+        name: mysql
+        pod: lamp-pod
+        image: mysql:8.0
+        state: started
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: testdb
+
+    - name: Copy index.php to host web root
+      copy:
+        src: ../src/index.php
+        dest: /home/vboxuser/containers/html/index.php
+
+===== DEPLOY =====
+
+PLAY [Deploy LAMP Infrastructure] **********************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [rockey8]
+
+TASK [Create lamp-pod pod] *****************************************************
+fatal: [rockey8]: FAILED! => {"changed": false, "msg": "missing required arguments: name"}
+
+PLAY RECAP *********************************************************************
+rockey8                    : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+
+Return code = 2
+
+=== EXECUTION_NODE podman_ps ===
+CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES
+
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume fec664525b94ba8e62d185f62b0ce2444c6616165c500833a1deb29cdd8b821f: acquiring lock 4 for volume fec664525b94ba8e62d185f62b0ce2444c6616165c500833a1deb29cdd8b821f: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume 426eb3fb99f2f0b337192cbd1882b1dbdd9740b65b32f385ddfe56b0823b288e: acquiring lock 5 for volume 426eb3fb99f2f0b337192cbd1882b1dbdd9740b65b32f385ddfe56b0823b288e: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume 29c642de64947a54862bb39cfaac079d915cae2bcfda5f0a85daea6428161a95: acquiring lock 6 for volume 29c642de64947a54862bb39cfaac079d915cae2bcfda5f0a85daea6428161a95: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume 07aad4e722f070754a3ee88af1d26723298538f9826abbb11248e5c532dca6cf: acquiring lock 7 for volume 07aad4e722f070754a3ee88af1d26723298538f9826abbb11248e5c532dca6cf: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume d7f533ecea192071e906ec3c8e5b86e69d13d7b912711a583b303c5ea6b72ad0: acquiring lock 8 for volume d7f533ecea192071e906ec3c8e5b86e69d13d7b912711a583b303c5ea6b72ad0: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume bd9edfa42a63d408837a7472a9b90706a92b5592a5740dd03a6708b878d4cd88: acquiring lock 9 for volume bd9edfa42a63d408837a7472a9b90706a92b5592a5740dd03a6708b878d4cd88: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume 015de488f28344a067e94c8ea6302e4207ee22ebb99b21c6e216cf3a5a969370: acquiring lock 10 for volume 015de488f28344a067e94c8ea6302e4207ee22ebb99b21c6e216cf3a5a969370: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume 884b628dee89c0e0b8159ee940a21a7600a68a3916a8478364dab50ae66dc3c7: acquiring lock 11 for volume 884b628dee89c0e0b8159ee940a21a7600a68a3916a8478364dab50ae66dc3c7: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume 90423be6ff15f38091655912fc398668983575b84ebc4faee90d6b8f8a726c38: acquiring lock 12 for volume 90423be6ff15f38091655912fc398668983575b84ebc4faee90d6b8f8a726c38: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume 91dca4bb49f60baadcaa5de363ea06a55b0dbad4922ce7853037233ff4186411: acquiring lock 13 for volume 91dca4bb49f60baadcaa5de363ea06a55b0dbad4922ce7853037233ff4186411: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume 2ca3aeac384391eeef4d63e81a69883e7ee8a2429febfbf337f60891d508a2c1: acquiring lock 14 for volume 2ca3aeac384391eeef4d63e81a69883e7ee8a2429febfbf337f60891d508a2c1: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume 313c2e914e96fd43dc053263d5da9ddb3499b22247f3d71676255dfcb6f0caae: acquiring lock 15 for volume 313c2e914e96fd43dc053263d5da9ddb3499b22247f3d71676255dfcb6f0caae: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume 9222b20de623e1d5b17a0d55972c680cb27319db6a09367004b5c87fff048971: acquiring lock 16 for volume 9222b20de623e1d5b17a0d55972c680cb27319db6a09367004b5c87fff048971: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume 1b36a809c08429cff28630e08cd7a8f5fa3eaf56e99bc4c2fcbbb61e60256f15: acquiring lock 17 for volume 1b36a809c08429cff28630e08cd7a8f5fa3eaf56e99bc4c2fcbbb61e60256f15: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume e534b83e7805e110912870386d7047f5c698b7c6fd262343128f32a91835ec82: acquiring lock 18 for volume e534b83e7805e110912870386d7047f5c698b7c6fd262343128f32a91835ec82: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume 505d702f7320664ddf76eeab56541455332b308416f64846abf6d0e1d8052e2b: acquiring lock 19 for volume 505d702f7320664ddf76eeab56541455332b308416f64846abf6d0e1d8052e2b: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume e8fd672c7e925373a25ff771fa715133b5a898f3c63a85643f1004d0b19b6339: acquiring lock 20 for volume e8fd672c7e925373a25ff771fa715133b5a898f3c63a85643f1004d0b19b6339: file exists"
+time="2026-09-12T14:07:00+09:00" level=error msg="Refreshing volume f463638e41e7d8bff55010f7f310e43af1be9386147cff4fdae38016f1ed34c8: acquiring lock 21 for volume f463638e41e7d8bff55010f7f310e43af1be9386147cff4fdae38016f1ed34c8: file exists"
+
+
+=== EXECUTION_NODE podman_ps_pod ===
+CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES       POD ID      PODNAME
+
+
+=== EXECUTION_NODE podman_pod_ps ===
+POD ID      NAME        STATUS      CREATED     INFRA ID    # OF CONTAINERS
+
+
+=== EXECUTION_NODE php_logs ===
+
+Error: no container with name or ID "php" found: no such container
+
+
+=== EXECUTION_NODE mysql_logs ===
+
+Error: no container with name or ID "mysql" found: no such container
+
+
+=== EXECUTION_NODE pod_inspect ===
+[]
+
+Error: no such object: "lamp-pod"
+
+
+=== EXECUTION_NODE curl ===
+
+curl: (7) Failed to connect to localhost port 8080: 接続を拒否されました
+
+
+=== HOST HTML ===
+合計 4
+-rw-r--r--. 1 vboxuser vboxuser 1016  9月 11 16:17 index.php
+
+
+=== CONTAINER index.php ===
+
+
+===== POD STATE CHECK =====
+(0, 'POD ID      NAME        STATUS      CREATED     INFRA ID    # OF CONTAINERS\n', '')
+(0, 'CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES\n', '')
+Pod is not running after deploy
+
+===== BROWSER VALIDATION (attempt 1) =====
+Browser validation request (attempt 1/10)
+
+===== POD STATE CHECK =====
+(0, 'POD ID      NAME        STATUS      CREATED     INFRA ID    # OF CONTAINERS\n', '')
+(0, 'CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES\n', '')
+PHP container is not running. Waiting before HTTP validation...
+Browser validation request (attempt 2/10)
+
+===== POD STATE CHECK =====
+(0, 'POD ID      NAME        STATUS      CREATED     INFRA ID    # OF CONTAINERS\n', '')
+(0, 'CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES\n', '')
+PHP container is not running. Waiting before HTTP validation...
+Browser validation request (attempt 3/10)
+
+===== POD STATE CHECK =====
+(0, 'POD ID      NAME        STATUS      CREATED     INFRA ID    # OF CONTAINERS\n', '')
+(0, 'CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES\n', '')
+PHP container is not running. Waiting before HTTP validation...
+Browser validation request (attempt 4/10)
+
+===== POD STATE CHECK =====
+(0, 'POD ID      NAME        STATUS      CREATED     INFRA ID    # OF CONTAINERS\n', '')
+(0, 'CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES\n', '')
+PHP container is not running. Waiting before HTTP validation...
+Browser validation request (attempt 5/10)
+
+===== POD STATE CHECK =====
+(0, 'POD ID      NAME        STATUS      CREATED     INFRA ID    # OF CONTAINERS\n', '')
+(0, 'CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES\n', '')
+PHP container is not running. Waiting before HTTP validation...
+Browser validation request (attempt 6/10)
+
+===== POD STATE CHECK =====
+(0, 'POD ID      NAME        STATUS      CREATED     INFRA ID    # OF CONTAINERS\n', '')
+(0, 'CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES\n', '')
+PHP container is not running. Waiting before HTTP validation...
+Browser validation request (attempt 7/10)
+
+===== POD STATE CHECK =====
+(0, 'POD ID      NAME        STATUS      CREATED     INFRA ID    # OF CONTAINERS\n', '')
+(0, 'CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES\n', '')
+PHP container is not running. Waiting before HTTP validation...
+Browser validation request (attempt 8/10)
+
+===== POD STATE CHECK =====
+(0, 'POD ID      NAME        STATUS      CREATED     INFRA ID    # OF CONTAINERS\n', '')
+(0, 'CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES\n', '')
+PHP container is not running. Waiting before HTTP validation...
+Browser validation request (attempt 9/10)
+
+===== POD STATE CHECK =====
+(0, 'POD ID      NAME        STATUS      CREATED     INFRA ID    # OF CONTAINERS\n', '')
+(0, 'CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES\n', '')
+PHP container is not running. Waiting before HTTP validation...
+Browser validation request (attempt 10/10)
+
+===== POD STATE CHECK =====
+(0, 'POD ID      NAME        STATUS      CREATED     INFRA ID    # OF CONTAINERS\n', '')
+(0, 'CONTAINER ID  IMAGE       COMMAND     CREATED     STATUS      PORTS       NAMES\n', '')
+PHP container is not running. Waiting before HTTP validation...
+{
+  "success": false,
+  "status": 0,
+  "body": "",
+  "headers": {},
+  "stdout": "",
+  "stderr": ""
+}
+Browser issues: [{"type": "browser_connection_error", "category": "infrastructure", "severity": "blocker", "detail": "", "repair_target": "ansible/playbook.yml"}]
+
+===== PHP LINT =====
+{
+  "success": false,
+  "exit_code": 125,
+  "stdout": "",
+  "stderr": "Error: no container with name or ID \"php\" found: no such container\n"
+}
+PHP lint issues: [{"type": "php_lint_infrastructure", "category": "infrastructure", "severity": "blocker", "detail": "Error: no container with name or ID \"php\" found: no such container", "repair_target": "ansible/playbook.yml"}]
+[ERROR] ansible/playbook.yml
+BEFORE REGENERATE
+=== REPAIR V2 START ===
+ansible/playbook.yml
+===== CONTRACT FEEDBACK =====
+
+=============================
+===== DEPLOYMENT CONTRACT =====
+{
+  "web_url": "http://192.168.122.10:8080",
+  "db_host": "mysql",
+  "db_port": 3306,
+  "db_name": "testdb",
+  "db_user": "root",
+  "db_password": "secret"
+}
+===============================
+Repair prompt length = 3,276 chars
+Calling Ollama...
+content = '{\n"content": "- name: Deploy LAMP Infrastructure\\n  hosts:\\n    - execution\\n  tasks:\\n    - name: Create lamp-pod pod\\n      containers.podman.podman_pod:\\n        container/pod_name: lamp-pod\\n        state: started\\n        publish:\\n          - \\"8080:80\\"\\n\\n    - name: Start PHP container in lamp-pod\\n      containers.podman.podman_container:\\n        name: php\\n        pod: lamp-pod\\n        image: php:8.2-apache\\n        state: started\\n        command:\\n          - sh\\n          - -c\\n          - docker-php-ext-install pdo_mysql && apache2-foreground\\n        env:\\n          db_host: mysql\\n          db_port: 3306\\n          db_name: testdb\\n          db_user: root\\n          db_password: secret\\n        volumes:\\n          - /home/vboxuser/containers/html:/var/www/html\\n\\n    - name: Start MySQL container in lamp-pod\\n      containers.podman.podman_container:\\n        name: mysql\\n        pod: lamp-pod\\n        image: mysql:8.0\\n        state: started\\n        env:\\n          MYSQL_ROOT_PASSWORD: secret\\n          MYSQL_DATABASE: testdb"\n}'
+RAW LENGTH = 1065
+===== RAW TAIL =====
+{
+"content": "- name: Deploy LAMP Infrastructure\n  hosts:\n    - execution\n  tasks:\n    - name: Create lamp-pod pod\n      containers.podman.podman_pod:\n        container/pod_name: lamp-pod\n        state: started\n        publish:\n          - \"8080:80\"\n\n    - name: Start PHP container in lamp-pod\n      containers.podman.podman_container:\n        name: php\n        pod: lamp-pod\n        image: php:8.2-apache\n        state: started\n        command:\n          - sh\n          - -c\n          - docker-php-ext-install pdo_mysql && apache2-foreground\n        env:\n          db_host: mysql\n          db_port: 3306\n          db_name: testdb\n          db_user: root\n          db_password: secret\n        volumes:\n          - /home/vboxuser/containers/html:/var/www/html\n\n    - name: Start MySQL container in lamp-pod\n      containers.podman.podman_container:\n        name: mysql\n        pod: lamp-pod\n        image: mysql:8.0\n        state: started\n        env:\n          MYSQL_ROOT_PASSWORD: secret\n          MYSQL_DATABASE: testdb"
+}
+====================
+===== REPAIR RAW =====
+{
+"content": "- name: Deploy LAMP Infrastructure\n  hosts:\n    - execution\n  tasks:\n    - name: Create lamp-pod pod\n      containers.podman.podman_pod:\n        container/pod_name: lamp-pod\n        state: started\n        publish:\n          - \"8080:80\"\n\n    - name: Start PHP container in lamp-pod\n      containers.podman.podman_container:\n        name: php\n        pod: lamp-pod\n        image: php:8.2-apache\n        state: started\n        command:\n          - sh\n          - -c\n          - docker-php-ext-install pdo_mysql && apache2-foreground\n        env:\n          db_host: mysql\n          db_port: 3306\n          db_name: testdb\n          db_user: root\n          db_password: secret\n        volumes:\n          - /home/vboxuser/containers/html:/var/www/html\n\n    - name: Start MySQL container in lamp-pod\n      containers.podman.podman_container:\n        name: mysql\n        pod: lamp-pod\n        image: mysql:8.0\n        state: started\n        env:\n          MYSQL_ROOT_PASSWORD: secret\n          MYSQL_DATABASE: testdb"
+}
+======================
+DEBUG parsed type = <class 'list'>
+DEBUG parsed head = [{'name': 'Deploy LAMP Infrastructure', 'hosts': ['execution'], 'tasks': [{'name': 'Create lamp-pod pod', 'containers.podman.podman_pod': {'container/pod_name': 'lamp-pod', 'state': 'started', 'publish': ['8080:80']}}, {'name': 'Start PHP container in lamp-pod', 'containers.podman.podman_container': {'name': 'php', 'pod': 'lamp-pod', 'image': 'php:8.2-apache', 'state': 'started', 'command': ['sh', '-c', 'docker-php-ext-install pdo_mysql && apache2-foreground'], 'env': {'db_host': 'mysql', 'db_port': 3306, 'db_name': 'testdb', 'db_user': 'root', 'db_password': 'secret'}, 'volumes': ['/home/vboxuser/containers/html:/var/www/html']}}, {'name': 'Start MySQL container in lamp-pod', 'containers.podman.podman_container': {'name': 'mysql', 'pod': 'lamp-pod', 'image': 'mysql:8.0', 'state': 'started', 'env': {'MYSQL_ROOT_PASSWORD': 'secret', 'MYSQL_DATABASE': 'testdb'}}}]}]
+===== REPAIR CONTRACT VALIDATION FAILED =====
+- Infrastructure contract violation: index.php must be copied to /home/vboxuser/containers/html/index.php.
+python : Traceback (most recent call last):
+発生場所 行:1 文字:1
++ python -u pipeline/ai_pipeline.py 2>&1 | Tee-Object -FilePath pipelin ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "D:\Devlopment\ai_driven\pipeline\ai_pipeline.py", line 3723, in <module>
+    main()
+  File "D:\Devlopment\ai_driven\pipeline\ai_pipeline.py", line 3711, in main
+    success = handler(context, task_name, task)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Devlopment\ai_driven\pipeline\ai_pipeline.py", line 3028, in run_infrastructure_pipeline
+    repair_validation_errors(
+  File "D:\Devlopment\ai_driven\pipeline\ai_pipeline.py", line 2415, in repair_validation_errors
+    regenerated = regenerate_file_with_context(
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Devlopment\ai_driven\pipeline\ai_pipeline.py", line 691, in regenerate_file_with_context
+    raise RuntimeError(
+RuntimeError: Infrastructure contract violation:
+Infrastructure contract violation: index.php must be copied to /home/vboxuser/containers/html/index.php.

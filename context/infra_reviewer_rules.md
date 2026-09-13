@@ -90,23 +90,17 @@ the Infrastructure Deployment Contract.
 
 If a blocking problem exists:
 
-```
 "approved": false
-```
 
 and the corresponding risk must have:
 
-```
 "severity": "BLOCKING"
-```
 
 Do not approve a blocking problem as a warning.
 
 If no blocking problem exists:
 
-```
 "approved": true
-```
 
 Warnings are allowed only for non-blocking issues.
 

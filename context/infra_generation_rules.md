@@ -27,29 +27,40 @@ Do not use a top-level playbook object.
 
 ## Podman
 
-Use:
+Use exactly these Ansible modules:
 
-- containers.podman.podman_pod
-- containers.podman.podman_container
+containers.podman.podman_pod
+containers.podman.podman_container
 
-The pod MUST be:
+For containers.podman.podman_pod:
 
-- name: lamp-pod
-- ports: 8080:80
+container/pod name key MUST be name
+pod name MUST be lamp-pod
+state MUST be started
+port publication key MUST be publish
+published port MUST be "8080:80"
 
-The PHP container MUST be a separate podman_container task with:
+For containers.podman.podman_container:
 
-- image: php:8.2-apache
-- pod: lamp-pod
-- name: php
-- state: started
+container name key MUST be name
+PHP name MUST be php
+MySQL name MUST be mysql
+pod key MUST be pod
+pod value MUST be lamp-pod
+state MUST be started
 
-The MySQL container MUST be a separate podman_container task with:
+Do NOT use:
 
-- image: mysql:8.0
-- pod: lamp-pod
-- name: mysql
-- state: started
+container_name
+pod_name
+publish_port
+ports
+Docker Compose syntax
+invented Podman parameter names
+
+PHP and MySQL must be separate containers.podman.podman_container tasks.
+Do not use shell/command for container management.
+Do not use podman exec.
 
 ## PHP Runtime
 
@@ -102,9 +113,20 @@ volumes:
 The MySQL container MUST contain:
 
 env:
+
 MYSQL_ROOT_PASSWORD: <Deployment Contract db_password>
 
-The database name MUST correspond to the Deployment Contract.
+MYSQL_DATABASE: <Deployment Contract db_name>
+
+MYSQL_DATABASE is mandatory.
+
+The value of MYSQL_DATABASE MUST be exactly the Deployment Contract db_name value.
+
+Do not omit MYSQL_DATABASE.
+
+Do not create the database using Ansible shell, Ansible command, podman exec, or any separate database initialization task.
+
+Do not invent additional database names
 
 ## Application File
 

@@ -1,32 +1,44 @@
 - name: Deploy LAMP Infrastructure
   hosts:
-  - execution
+    - execution
   tasks:
-  - name: Create lamp-pod with port mapping
-    containers.podman.podman_pod:
-      name: lamp-pod
-      state: started
-      publish:
-      - 8080:80
-  - name: Start PHP container in pod
-    containers.podman.podman_container:
-      image: php:8.2-apache
-      name: php
-      pod: lamp-pod
-      state: started
-      command:
-      - sh
-      - -c
-      - docker-php-ext-install pdo_mysql && apache2-foreground
-      env:
-        db_host: mysql
-        db_port: 3306
-        db_name: testdb
-        db_user: root
-        db_password: secret
-      volumes:
-      - /home/vboxuser/containers/html:/var/www/html
-  - name: Copy index.php to web container
-    copy:
-      src: ../src/index.php
-      dest: /home/vboxuser/containers/html/index.php
+    - name: Create lamp-pod pod
+      containers.podman.podman_pod:
+        name: lamp-pod
+        state: started
+        publish:
+          - "8080:80"
+
+    - name: Start PHP container in lamp-pod
+      containers.podman.podman_container:
+        name: php
+        pod: lamp-pod
+        image: php:8.2-apache
+        state: started
+        command:
+          - sh
+          - -c
+          - docker-php-ext-install pdo_mysql && apache2-foreground
+        env:
+          db_host: mysql
+          db_port: 3306
+          db_name: testdb
+          db_user: root
+          db_password: secret
+        volumes:
+          - /home/vboxuser/containers/html:/var/www/html
+
+    - name: Start MySQL container in lamp-pod
+      containers.podman.podman_container:
+        name: mysql
+        pod: lamp-pod
+        image: mysql:8.0
+        state: started
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: testdb
+
+    - name: Copy index.php to host web root
+      copy:
+        src: ../src/index.php
+        dest: /home/vboxuser/containers/html/index.php

@@ -12,11 +12,10 @@ The result must provide a runnable Podman-based LAMP environment that can be val
 
 Generate exactly these required artifacts:
 
-```text
+text
 ansible/playbook.yml
 ansible/inventory.ini
 src/index.php
-```
 
 ---
 
@@ -24,15 +23,13 @@ src/index.php
 
 Create:
 
-```text
+text
 ansible/playbook.yml
-```
 
 The playbook must target:
 
-```text
+text
 execution
-```
 
 It must create and start:
 
@@ -44,29 +41,25 @@ Use the Podman Ansible modules.
 
 The web service must be exposed through:
 
-```text
+text
 8080:80
-```
 
 The web port must be published at the Pod level.
 
 The PHP container must use:
 
-```text
+text
 php:8.2-apache
-```
 
 The MySQL container must use:
 
-```text
+text
 mysql:8.0
-```
 
 The PHP container must mount:
 
-```text
+text
 /home/vboxuser/containers/html:/var/www/html
-```
 
 The generated `src/index.php` must be available from the web document root.
 
@@ -78,13 +71,12 @@ The Infrastructure runtime must provide the database contract required by the la
 
 Use:
 
-```text
+text
 Host: mysql
 Port: 3306
 Database: testdb
 User: root
 Password: secret
-```
 
 ---
 
@@ -92,9 +84,8 @@ Password: secret
 
 The PHP runtime must be based on:
 
-```text
+text
 php:8.2-apache
-```
 
 PDO MySQL support (`pdo_mysql`) must be available.
 
@@ -106,23 +97,20 @@ The Infrastructure phase must not implement database application logic.
 
 Create:
 
-```text
+text
 ansible/inventory.ini
-```
 
 It must define the execution host:
 
-```text
+text
 [execution]
 rockey8
-```
 
 The control node may be defined as:
 
-```text
+text
 [control]
 asbsvr
-```
 
 ---
 
@@ -130,17 +118,15 @@ asbsvr
 
 Create:
 
-```text
+text
 src/index.php
-```
 
 The page is used only to verify that the Infrastructure web service is working.
 
 A successful response must display:
 
-```text
+text
 Infrastructure OK
-```
 
 Do not implement database connectivity or other application business logic in this file.
 
@@ -175,9 +161,8 @@ The Infrastructure task is complete when:
 - the browser can receive the Infrastructure validation page;
 - the response contains:
 
-```text
+text
 Infrastructure OK
-```
 
 ---
 
