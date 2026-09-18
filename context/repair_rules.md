@@ -109,6 +109,26 @@ Do not introduce:
 - diagnostic tasks
 - workaround tasks
 
+## Runtime Recovery
+
+When runtime validation reports that the existing Infrastructure Pod or its required containers are stopped, runtime recovery is a valid Infrastructure repair target.
+
+If the current playbook contains `state: started` but re-running the playbook leaves the existing Pod or its containers stopped, the repairer must not assume that the existing `state: started` configuration is sufficient.
+
+The repairer may modify or add the minimum Ansible configuration required to make re-running the playbook restore the existing Infrastructure to the required running state.
+
+Runtime recovery must operate on the existing:
+
+- lamp-pod
+- php
+- mysql
+
+Do not create duplicate resources.
+
+Do not move runtime recovery into the Python pipeline.
+
+Do not use manual recovery as the final solution.
+
 Do not use Ansible block for the required infrastructure tasks.
 
 Required infrastructure tasks must remain direct sibling entries under the play tasks list.
@@ -402,9 +422,11 @@ Do not add:
 - readiness checks
 - retry tasks
 - diagnostic tasks
-- additional validation tasks
-- additional deployment tasks
 - workaround tasks
+
+An additional deployment task is permitted only when runtime validation explicitly identifies a stopped existing Pod or container as the reported failure and the task directly restores that existing resource to the required running state.
+
+Such a task must not create a second Pod or container.
 
 unless the mandatory repair evidence explicitly requires that specific configuration.
 
@@ -449,7 +471,7 @@ Do not place them inside block.
 
 Do not create additional tasks to compensate for an incorrectly configured existing task.
 
-HTTP 403 with Apache unable to read .htaccess may indicate an SELinux bind-mount labeling issue. If runtime evidence supports this diagnosis, change the existing PHP volume from /home/vboxuser/containers/html:/var/www/html to /home/vboxuser/containers/html:/var/www/html.
+HTTP 403 with Apache unable to read .htaccess may indicate an SELinux bind-mount labeling issue. If runtime evidence supports this diagnosis, change the existing PHP volume from /home/vboxuser/containers/html:/var/www/html to /home/vboxuser/containers/html:/var/www/html:Z.
 
 ## Repair Decision Rules
 

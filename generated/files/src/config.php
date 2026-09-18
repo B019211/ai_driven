@@ -1,8 +1,8 @@
 <?php
 return [
-    'db_host' => getenv('db_host'),
-    'db_port' => (int)env_get('db_port', 3306),
-    'db_name' => getenv('db_name'),
-    'db_user' => getenv('db_user'),
-    'db_password' => getenv('db_password') ?: '',
+    'db_host' => getenv('DB_HOST'),
+    'db_port' => (int)getenv('DB_PORT'),
+    'db_name' => getenv('DB_NAME'),
+    'db_user' => getenv('DB_USER'),
+    'db_password' => getenv('DB_PASSWORD'),
 ];

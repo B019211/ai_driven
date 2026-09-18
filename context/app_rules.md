@@ -1,143 +1,71 @@
-app_rules.md
-
 # Application Rules
 
 ## Application Scope
 
-Generate application source files only.
+Generate Application source files only.
 
-Do not generate or modify:
+Do not generate or modify Infrastructure files, Ansible files, Podman configuration, or Infrastructure runtime configuration.
 
-- Infrastructure files
+Generate only files explicitly required by the Application Task.
 
-- Ansible files
+Do not introduce unrequested frameworks, libraries, services, or dependencies.
 
-- Podman configuration
+The Application runs on the existing PHP 8.2 runtime and available extensions.
 
-- infrastructure runtime configuration
-
-Generate only files explicitly requested by the Application Task.
-
-Do not redesign Infrastructure.
-
-Do not introduce unrequested frameworks, services, libraries, or dependencies.
-
-The application must run using the existing PHP runtime and its available extensions.
-
-For the current Application Task, use only PHP built-in functionality and the PDO MySQL driver already provided by the existing PHP runtime.
-
-Do not introduce Composer, a vendor directory, an autoloader, or third-party libraries.
-
-Do not add require or require_once statements for dependency files that are not part of the generated application.
-
-Do not reference vendor/autoload.php.
+Do not use Composer, vendor packages, or third-party libraries unless explicitly required.
 
 ## Infrastructure Boundary
 
-Infrastructure must already be completed before Application generation starts.
+Infrastructure must be completed before Application generation starts.
 
-Application generation must not start when Infrastructure completion is false.
-
-The Application receives the Deployment Contract from the completed Infrastructure phase.
-
-The Application must not create or modify the Deployment Contract.
-
-## Deployment Contract
-
-The Deployment Contract is authoritative.
-
-Required values:
-
-- db_host
-
-- db_port
-
-- db_name
-
-- db_user
-
-- db_password
-
-Do not:
-
-- guess values
-
-- infer values
-
-- replace values
-
-- invent values
-
-- modify values
-
-- introduce an alternative runtime mechanism
-
-## Runtime Mechanism
-
-Infrastructure provides the Deployment Contract database values to the PHP runtime through environment variables.
-
-The environment variable names are exactly:
-
-- db_host
-
-- db_port
-
-- db_name
-
-- db_user
-
-- db_password
-
-Application code must use getenv() to read them.
-
-Do not hardcode connection values.
-
-## Database Access
-
-When database access is required:
-
-- use PHP 8.2 compatible syntax
-
-- use PDO
-
-- use the MySQL PDO driver
-
-- construct the DSN from db_host, db_port, and db_name
-
-- include charset in the DSN
-
-- authenticate using db_user and db_password
-
-The database name MUST NOT be omitted from the DSN.
-
-The generated application must not invent database host, database name, user, password, or port values.
+Application uses the existing Infrastructure and must not construct, repair, or redesign it.
 
 Do not modify Infrastructure to solve an Application problem.
 
+If a problem is caused by Infrastructure, report it rather than changing Infrastructure.
+
+## Deployment Contract
+
+The Deployment Contract is the authoritative interface between Infrastructure and Application.
+
+Application must use the Contract values and must not create, modify, replace, or invent Contract values.
+
+Required database values:
+
+- db_host
+- db_port
+- db_name
+- db_user
+- db_password
+
+Infrastructure provides these values to the PHP runtime as environment variables with the same names.
+
+Application must obtain them using `getenv()`.
+
+Do not hardcode database connection values.
+
+## Database
+
+When database access is required:
+
+- Use PDO and the available MySQL driver.
+- Use the Deployment Contract values.
+- Include the Contract-defined database name in the DSN.
+- Do not invent or replace database connection values.
+- Do not modify Infrastructure to solve database access problems.
+
+When the Application Task requires application database schema or initial data, Application may create and manage application-level tables, indexes, constraints, and initial data.
+
+Application must use the existing Contract-defined database and must not create or replace the database service itself.
+
 ## Validation
 
-Generated PHP must:
+Application source must have valid PHP syntax and satisfy the Application Task.
 
-- pass PHP syntax validation
+Application must run on the existing runtime and reference only existing files and dependencies.
 
-- execute in the existing Infrastructure runtime
+Do not assume missing Contract values or invent alternatives.
 
-- use the Deployment Contract
+## Learning Environment
 
-- satisfy the current Application Task
-
-- reference only files and dependencies that exist in the application environment
-
-If required Contract values are missing, stop.
-
-Do not invent alternatives.
-
-## Database Connectivity Validation
-
-When the current Application Task requires database connectivity, the application must verify connectivity using:
-
-SELECT 1
-
-The result comparison must account for PDO's returned scalar value potentially being represented as a string.
-
-Do not use strict integer comparison against an uncast PDO result.
+Do not reject or redesign an Application solely for production-quality concerns that are outside the current Application Task.

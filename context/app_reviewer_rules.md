@@ -1,79 +1,78 @@
-app_reviewer_rules.md
-
 # Application Review Rules
+
+## Review Scope
 
 Review Application artifacts only.
 
+Review against the Application Task, Application Rules, and Deployment Contract.
+
+Do not treat Infrastructure, Ansible, Podman, container, or deployment implementation details as Application defects unless the Application explicitly violates an Application rule.
+
 ## Reject
+
+Reject only blocking Application problems.
 
 Reject when:
 
-- PHP syntax is invalid
+- PHP syntax is invalid.
+- Required Application functionality is missing.
+- Application cannot run on the existing PHP runtime.
+- Unsupported or unrequested dependencies are introduced.
+- Nonexistent files or dependencies are referenced.
+- Infrastructure or Ansible files are generated or modified.
+- Deployment Contract is modified or replaced.
+- Required Contract values are ignored.
+- Database connection values are hardcoded.
+- An alternative runtime configuration mechanism replaces the Contract.
+- Application attempts to replace the Contract-defined database or database service.
 
-- required application functionality is missing
+## Deployment Contract
 
-- the application cannot execute under the existing PHP runtime
+When database access is required, verify that Application uses:
 
-- unsupported PHP extensions or frameworks are introduced
+- db_host
+- db_port
+- db_name
+- db_user
+- db_password
 
-- unrequested dependencies are introduced
+through the Contract-defined runtime environment.
 
-- the application references files or dependencies that do not exist in the application environment
+Do not require Application to create or modify the Contract.
 
-- infrastructure files are generated
+## Database
 
-- Ansible files are generated
+When database functionality is required:
 
-- Podman configuration is generated
+- Use the existing MySQL service.
+- Use the Contract-defined database.
+- Use PDO with the available MySQL driver.
+- Do not redesign Infrastructure.
 
-- the application modifies Infrastructure unnecessarily
+When the Application Task requires application schema or initial data, creating application-level tables, indexes, constraints, or initial data is valid Application behavior.
 
-- the Deployment Contract is modified or replaced
+Do not reject application schema creation merely because Infrastructure does not create those tables.
 
-- database connection values are hardcoded
+## Infrastructure Boundary
 
-- the application invents an alternative runtime mechanism
+Do not reject Application for an Infrastructure problem that is outside Application responsibility.
 
-- required Contract values are ignored
-
-## MySQL
-
-When MySQL connectivity is required:
-
-- use the existing MySQL service name
-
-- use the existing database name
-
-- use PDO with the available MySQL driver
-
-- use the Deployment Contract
-
-- do not redesign the MySQL container
-
-- do not modify Infrastructure configuration
-
-## Scope
-
-Do not review Ansible or Podman implementation details as Application errors.
-
-Reject application code for an infrastructure issue only when the application explicitly violates an Application rule.
+Do not fabricate downstream, container, networking, deployment, or runtime defects from Application source.
 
 ## Learning Environment
 
-Temporary local-learning compromises are allowed when they do not block the pipeline.
-
-Do not reject solely for production-quality improvements outside the current task.
+Do not reject solely for production-quality concerns outside the current Application Task.
 
 ## Review Decision
 
-Reject only blocking problems.
+Blocking problem:
 
-Blocking problems must set:
+- `approved = false`
+- severity = `BLOCKING`
 
-"approved": false
+Non-blocking issue:
 
-and use:
+- `approved = true`
+- report as warning
 
-"severity": "BLOCKING"
-
-Warnings are for non-blocking issues.
+Reject only concrete, evidence-based blocking problems.

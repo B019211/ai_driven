@@ -1,0 +1,2114 @@
+﻿
+  pipeline\ai_pipeline.py:15:from typing import Any, Dict, List, Tuple, Optional, Set
+  pipeline\ai_pipeline.py:16:
+  pipeline\ai_pipeline.py:17:from dotenv import load_dotenv
+> pipeline\ai_pipeline.py:18:from json_repair import repair_json
+  pipeline\ai_pipeline.py:19:from jsonschema import validate, ValidationError
+  pipeline\ai_pipeline.py:20:
+  pipeline\ai_pipeline.py:21:from config import (
+  pipeline\ai_pipeline.py:22:    BLOCKING_SEVERITIES,
+  pipeline\ai_pipeline.py:23:    MAX_RETRY,
+  pipeline\ai_pipeline.py:48:    log_text,
+  pipeline\ai_pipeline.py:49:    run_command,
+  pipeline\ai_pipeline.py:50:    run_remote_command,
+> pipeline\ai_pipeline.py:51:    repair_yaml_text,
+  pipeline\ai_pipeline.py:52:    strip_markdown_fence,
+> pipeline\ai_pipeline.py:53:    repair_podman_yaml_content,
+> pipeline\ai_pipeline.py:54:    plan_repair,
+  pipeline\ai_pipeline.py:55:)
+  pipeline\ai_pipeline.py:56:
+  pipeline\ai_pipeline.py:57:from validation import (
+  pipeline\ai_pipeline.py:58:    validate_base64,
+  pipeline\ai_pipeline.py:59:    semantic_yaml_check,
+  pipeline\ai_pipeline.py:68:    deploy_pipeline,
+  pipeline\ai_pipeline.py:69:    check_pod_state,
+  pipeline\ai_pipeline.py:70:    analyze_deploy_error,
+> pipeline\ai_pipeline.py:71:    run_browser_validation,
+  pipeline\ai_pipeline.py:72:    run_php_lint,
+  pipeline\ai_pipeline.py:73:    collect_deploy_evidence,
+  pipeline\ai_pipeline.py:74:    analyze_deploy_result,
+  pipeline\ai_pipeline.py:75:)
+  pipeline\ai_pipeline.py:76:
+  pipeline\ai_pipeline.py:298:    format_rules: str,
+  pipeline\ai_pipeline.py:299:) -> str:
+  pipeline\ai_pipeline.py:300:    """
+> pipeline\ai_pipeline.py:301:    AI-driven file repair.
+  pipeline\ai_pipeline.py:302:
+> pipeline\ai_pipeline.py:303:    Repair AI returns the complete repaired content of the
+  pipeline\ai_pipeline.py:304:    existing target file.
+  pipeline\ai_pipeline.py:305:
+  pipeline\ai_pipeline.py:306:    Python does not apply old/new text patches.
+  pipeline\ai_pipeline.py:307:    The returned file is validated before the caller writes it.
+  pipeline\ai_pipeline.py:308:    """
+  pipeline\ai_pipeline.py:309:
+> pipeline\ai_pipeline.py:310:    print("=== REPAIR V2 START ===")
+  pipeline\ai_pipeline.py:311:    print(path)
+  pipeline\ai_pipeline.py:312:
+  pipeline\ai_pipeline.py:313:    target = SAFE_ROOT / path
+> pipeline\ai_pipeline.py:314:    repair_rules = (
+> pipeline\ai_pipeline.py:315:        PROJECT_ROOT / "context/repair_rules.md"
+  pipeline\ai_pipeline.py:316:    ).read_text(encoding="utf-8")
+  pipeline\ai_pipeline.py:317:
+> pipeline\ai_pipeline.py:318:    repair_prompt = (
+> pipeline\ai_pipeline.py:319:        PROJECT_ROOT / "prompts/repairer.txt"
+  pipeline\ai_pipeline.py:320:    ).read_text(encoding="utf-8")
+  pipeline\ai_pipeline.py:321:
+  pipeline\ai_pipeline.py:322:    if not target.exists():
+  pipeline\ai_pipeline.py:323:        raise FileNotFoundError(
+> pipeline\ai_pipeline.py:324:            f"Repair target does not exist: {target}"
+  pipeline\ai_pipeline.py:325:        )
+  pipeline\ai_pipeline.py:326:
+  pipeline\ai_pipeline.py:327:    current_file = target.read_text(encoding="utf-8")
+  pipeline\ai_pipeline.py:328:
+  pipeline\ai_pipeline.py:329:    errors = context_data.get("errors", [])
+  pipeline\ai_pipeline.py:360:
+  pipeline\ai_pipeline.py:361:
+  pipeline\ai_pipeline.py:362:    # =========================================================
+> pipeline\ai_pipeline.py:363:    # Repair AIへ渡す情報を最小化する
+  pipeline\ai_pipeline.py:364:    # =========================================================
+  pipeline\ai_pipeline.py:365:    errors_text = json.dumps(
+  pipeline\ai_pipeline.py:366:        errors,
+  pipeline\ai_pipeline.py:367:        ensure_ascii=False,
+  pipeline\ai_pipeline.py:368:        separators=(",", ":"),
+  pipeline\ai_pipeline.py:375:    )
+  pipeline\ai_pipeline.py:376:
+  pipeline\ai_pipeline.py:377:    if contract_feedback:
+> pipeline\ai_pipeline.py:378:        # Infrastructure Contract Repair:
+  pipeline\ai_pipeline.py:379:        # 決定論的Contract違反と現在ファイルを中心に修復する。
+  pipeline\ai_pipeline.py:380:        prompt = f"""
+  pipeline\ai_pipeline.py:381:    TARGET FILE:
+  pipeline\ai_pipeline.py:382:    {path}
+  pipeline\ai_pipeline.py:383:
+  pipeline\ai_pipeline.py:392:    {current_file}
+  pipeline\ai_pipeline.py:393:    --- END CURRENT FILE ---
+  pipeline\ai_pipeline.py:394:
+> pipeline\ai_pipeline.py:395:    REPAIR RULES:
+> pipeline\ai_pipeline.py:396:    {repair_rules}
+  pipeline\ai_pipeline.py:397:
+> pipeline\ai_pipeline.py:398:    Repair ONLY the reported contract violations.
+  pipeline\ai_pipeline.py:399:    Preserve all valid existing structure and content.
+  pipeline\ai_pipeline.py:400:    Do not redesign the file.
+  pipeline\ai_pipeline.py:401:    Do not add unrelated resources.
+  pipeline\ai_pipeline.py:402:    Do not change values that are not required by the reported violations.
+  pipeline\ai_pipeline.py:403:
+  pipeline\ai_pipeline.py:404:    Return exactly one JSON object.
+  pipeline\ai_pipeline.py:405:    The JSON object must contain exactly one key: content.
+> pipeline\ai_pipeline.py:406:    The value of content must be the complete repaired file content.
+  pipeline\ai_pipeline.py:407:    Do not return YAML directly.
+  pipeline\ai_pipeline.py:408:    Do not return Markdown.
+  pipeline\ai_pipeline.py:409:    Do not use code fences.
+  pipeline\ai_pipeline.py:410:    """
+  pipeline\ai_pipeline.py:411:
+  pipeline\ai_pipeline.py:412:    else:
+> pipeline\ai_pipeline.py:413:        # Runtime / deployment repair:
+> pipeline\ai_pipeline.py:414:        # 実測結果と診断をRepair AIへ渡す。
+  pipeline\ai_pipeline.py:415:        validation_evidence_text = json.dumps(
+  pipeline\ai_pipeline.py:416:            validation_evidence,
+  pipeline\ai_pipeline.py:417:            ensure_ascii=False,
+  pipeline\ai_pipeline.py:418:            separators=(",", ":"),
+  pipeline\ai_pipeline.py:419:        )
+  pipeline\ai_pipeline.py:428:    TARGET FILE:
+  pipeline\ai_pipeline.py:429:    {path}
+  pipeline\ai_pipeline.py:430:
+> pipeline\ai_pipeline.py:431:    REPAIR EVIDENCE:
+  pipeline\ai_pipeline.py:432:    {errors_text}
+  pipeline\ai_pipeline.py:433:
+  pipeline\ai_pipeline.py:434:    RUNTIME VALIDATION EVIDENCE:
+  pipeline\ai_pipeline.py:435:    {validation_evidence_text}
+  pipeline\ai_pipeline.py:436:
+  pipeline\ai_pipeline.py:443:    CURRENT FILE:
+  pipeline\ai_pipeline.py:444:    {current_file}
+  pipeline\ai_pipeline.py:445:
+> pipeline\ai_pipeline.py:446:    REPAIR RULES:
+> pipeline\ai_pipeline.py:447:Repair only the reported runtime problem.
+  pipeline\ai_pipeline.py:448:
+  pipeline\ai_pipeline.py:449:Preserve the existing file structure and every valid task.
+  pipeline\ai_pipeline.py:450:
+  pipeline\ai_pipeline.py:451:Do not delete, rename, reorder, or redesign existing tasks unless the reported probl
+em directly requires that exact change.
+  pipeline\ai_pipeline.py:452:
+  pipeline\ai_pipeline.py:479:
+  pipeline\ai_pipeline.py:480:Do not move these values to another container.
+  pipeline\ai_pipeline.py:481:
+> pipeline\ai_pipeline.py:482:Repair ONLY the reported problem.
+  pipeline\ai_pipeline.py:483:
+  pipeline\ai_pipeline.py:484:Return exactly one JSON object.
+  pipeline\ai_pipeline.py:485:
+  pipeline\ai_pipeline.py:486:The JSON object must contain exactly one key: content.
+  pipeline\ai_pipeline.py:487:
+> pipeline\ai_pipeline.py:488:The value of content must be the complete repaired file content.
+  pipeline\ai_pipeline.py:489:
+  pipeline\ai_pipeline.py:490:Do not return YAML directly.
+  pipeline\ai_pipeline.py:491:
+  pipeline\ai_pipeline.py:492:Do not return Markdown.
+  pipeline\ai_pipeline.py:493:
+  pipeline\ai_pipeline.py:498:Do not return analysis.
+  pipeline\ai_pipeline.py:499:    """
+  pipeline\ai_pipeline.py:500:
+> pipeline\ai_pipeline.py:501:# repairのトークンチェック
+> pipeline\ai_pipeline.py:502:    print("\n===== ACTUAL REPAIR PROMPT =====")
+  pipeline\ai_pipeline.py:503:    print(prompt)
+  pipeline\ai_pipeline.py:504:    print("================================")
+> pipeline\ai_pipeline.py:505:#    raise RuntimeError("STOP: inspect actual repair prompt")
+  pipeline\ai_pipeline.py:506:
+> pipeline\ai_pipeline.py:507:    print(f"Repair prompt length = {len(prompt):,} chars")
+  pipeline\ai_pipeline.py:508:    print("Calling Ollama...")
+  pipeline\ai_pipeline.py:509:
+  pipeline\ai_pipeline.py:510:    system_prompt = (
+> pipeline\ai_pipeline.py:511:        PROJECT_ROOT / "prompts/repairer.txt"
+  pipeline\ai_pipeline.py:512:    ).read_text(encoding="utf-8")
+  pipeline\ai_pipeline.py:513:
+  pipeline\ai_pipeline.py:514:    raw = ollama_chat(
+  pipeline\ai_pipeline.py:515:        messages=[
+  pipeline\ai_pipeline.py:516:            {
+  pipeline\ai_pipeline.py:538:    print(raw[-2000:])
+  pipeline\ai_pipeline.py:539:    print("====================")
+  pipeline\ai_pipeline.py:540:
+> pipeline\ai_pipeline.py:541:    print("===== REPAIR RAW =====")
+  pipeline\ai_pipeline.py:542:    print(raw)
+  pipeline\ai_pipeline.py:543:    print("======================")
+  pipeline\ai_pipeline.py:544:
+  pipeline\ai_pipeline.py:545:    try:
+> pipeline\ai_pipeline.py:546:        repair_result = safe_json_loads(
+  pipeline\ai_pipeline.py:547:            sanitize_json_string(
+  pipeline\ai_pipeline.py:548:                extract_json(raw)
+  pipeline\ai_pipeline.py:549:            )
+  pipeline\ai_pipeline.py:550:        )
+  pipeline\ai_pipeline.py:551:    except Exception as e:
+  pipeline\ai_pipeline.py:552:        raise RuntimeError(
+> pipeline\ai_pipeline.py:553:            f"Repair response JSON parsing failed: {e}"
+  pipeline\ai_pipeline.py:554:        ) from e
+  pipeline\ai_pipeline.py:555:
+> pipeline\ai_pipeline.py:556:    if not isinstance(repair_result, dict):
+  pipeline\ai_pipeline.py:557:        raise RuntimeError(
+> pipeline\ai_pipeline.py:558:            "Repair response must be a JSON object."
+  pipeline\ai_pipeline.py:559:        )
+  pipeline\ai_pipeline.py:560:
+> pipeline\ai_pipeline.py:561:    repaired_file = repair_result.get("content")
+  pipeline\ai_pipeline.py:562:
+> pipeline\ai_pipeline.py:563:    if not isinstance(repaired_file, str):
+> pipeline\ai_pipeline.py:564:        files = repair_result.get("files")
+  pipeline\ai_pipeline.py:565:
+  pipeline\ai_pipeline.py:566:        if isinstance(files, list) and len(files) == 1:
+  pipeline\ai_pipeline.py:567:            file_data = files[0]
+  pipeline\ai_pipeline.py:568:
+  pipeline\ai_pipeline.py:569:            if (
+  pipeline\ai_pipeline.py:571:                and file_data.get("path") == path
+  pipeline\ai_pipeline.py:572:                and isinstance(file_data.get("content"), str)
+  pipeline\ai_pipeline.py:573:            ):
+> pipeline\ai_pipeline.py:574:                repaired_file = file_data["content"]
+  pipeline\ai_pipeline.py:575:
+> pipeline\ai_pipeline.py:576:    if not isinstance(repaired_file, str):
+  pipeline\ai_pipeline.py:577:        raise RuntimeError(
+> pipeline\ai_pipeline.py:578:            "Repair response must contain string 'content' "
+  pipeline\ai_pipeline.py:579:            "or exactly one matching file in 'files'."
+  pipeline\ai_pipeline.py:580:        )
+  pipeline\ai_pipeline.py:581:
+> pipeline\ai_pipeline.py:582:    repaired_file = strip_markdown_fence(
+> pipeline\ai_pipeline.py:583:    repaired_file
+  pipeline\ai_pipeline.py:584:    ).strip()
+  pipeline\ai_pipeline.py:585:
+  pipeline\ai_pipeline.py:586:    # =========================================================
+> pipeline\ai_pipeline.py:587:    # Repair AI が現在ファイル用の区切り文字を
+  pipeline\ai_pipeline.py:588:    # content 内に混入させる場合があるため除去する。
+  pipeline\ai_pipeline.py:589:    # これはファイル内容ではなく、プロンプト上の
+  pipeline\ai_pipeline.py:590:    # 表示用マーカーなので、YAML検証前に取り除く。
+  pipeline\ai_pipeline.py:591:    # =========================================================
+  pipeline\ai_pipeline.py:592:
+  pipeline\ai_pipeline.py:593:    begin_marker = "--- BEGIN CURRENT FILE ---"
+  pipeline\ai_pipeline.py:594:    end_marker = "--- END CURRENT FILE ---"
+  pipeline\ai_pipeline.py:595:
+> pipeline\ai_pipeline.py:596:    if repaired_file.startswith(begin_marker):
+> pipeline\ai_pipeline.py:597:        repaired_file = repaired_file[
+  pipeline\ai_pipeline.py:598:            len(begin_marker):
+  pipeline\ai_pipeline.py:599:        ].lstrip()
+  pipeline\ai_pipeline.py:600:
+> pipeline\ai_pipeline.py:601:    if repaired_file.endswith(end_marker):
+> pipeline\ai_pipeline.py:602:        repaired_file = repaired_file[
+  pipeline\ai_pipeline.py:603:            :-len(end_marker)
+  pipeline\ai_pipeline.py:604:        ].rstrip()
+  pipeline\ai_pipeline.py:605:
+> pipeline\ai_pipeline.py:606:    if not repaired_file:
+  pipeline\ai_pipeline.py:607:        raise RuntimeError(
+> pipeline\ai_pipeline.py:608:            "Repair produced empty file content."
+  pipeline\ai_pipeline.py:609:        )
+  pipeline\ai_pipeline.py:610:
+> pipeline\ai_pipeline.py:611:    if repaired_file == current_file:
+> pipeline\ai_pipeline.py:612:        print("Repair produced no file change.")
+  pipeline\ai_pipeline.py:613:        return current_file
+  pipeline\ai_pipeline.py:614:
+  pipeline\ai_pipeline.py:615:
+  pipeline\ai_pipeline.py:616:
+  pipeline\ai_pipeline.py:617:    # =========================================================
+  pipeline\ai_pipeline.py:620:
+  pipeline\ai_pipeline.py:621:    if path.endswith((".yml", ".yaml")):
+  pipeline\ai_pipeline.py:622:        try:
+> pipeline\ai_pipeline.py:623:            repaired_file = postprocess_regenerated_file_content(
+> pipeline\ai_pipeline.py:624:                repaired_file,
+  pipeline\ai_pipeline.py:625:                path,
+  pipeline\ai_pipeline.py:626:            )
+> pipeline\ai_pipeline.py:627:            parsed_yaml = yaml.safe_load(repaired_file)
+  pipeline\ai_pipeline.py:628:        except yaml.YAMLError as e:
+  pipeline\ai_pipeline.py:629:            raise RuntimeError(
+> pipeline\ai_pipeline.py:630:                f"Repair produced invalid YAML: {e}"
+  pipeline\ai_pipeline.py:631:            ) from e
+  pipeline\ai_pipeline.py:632:
+  pipeline\ai_pipeline.py:633:        # Ansible playbook の root は必ず list。
+  pipeline\ai_pipeline.py:634:        # LLM が単一 play を mapping として返した場合は
+  pipeline\ai_pipeline.py:635:        # 決定論的に1 playへ正規化する。
+  pipeline\ai_pipeline.py:641:        ):
+  pipeline\ai_pipeline.py:642:            parsed_yaml = [parsed_yaml]
+  pipeline\ai_pipeline.py:643:
+> pipeline\ai_pipeline.py:644:            repaired_file = yaml.safe_dump(
+  pipeline\ai_pipeline.py:645:                parsed_yaml,
+  pipeline\ai_pipeline.py:646:                sort_keys=False,
+  pipeline\ai_pipeline.py:647:                allow_unicode=True,
+  pipeline\ai_pipeline.py:648:            )
+  pipeline\ai_pipeline.py:649:
+  pipeline\ai_pipeline.py:650:            print(
+  pipeline\ai_pipeline.py:651:                "\n=== ANSIBLE PLAYBOOK ROOT NORMALIZED ==="
+  pipeline\ai_pipeline.py:652:            )
+> pipeline\ai_pipeline.py:653:            print(repaired_file)
+  pipeline\ai_pipeline.py:654:
+  pipeline\ai_pipeline.py:655:        if (
+  pipeline\ai_pipeline.py:656:            path == "ansible/playbook.yml"
+  pipeline\ai_pipeline.py:657:            and not isinstance(parsed_yaml, list)
+  pipeline\ai_pipeline.py:658:        ):
+  pipeline\ai_pipeline.py:659:            raise RuntimeError(
+> pipeline\ai_pipeline.py:660:                "Repair produced invalid Ansible Playbook: "
+  pipeline\ai_pipeline.py:661:                "playbook root must be a YAML list."
+  pipeline\ai_pipeline.py:662:            )
+  pipeline\ai_pipeline.py:663:
+  pipeline\ai_pipeline.py:664:        # Ansible playbook structure validation
+  pipeline\ai_pipeline.py:665:        if path == "ansible/playbook.yml":
+  pipeline\ai_pipeline.py:668:
+  pipeline\ai_pipeline.py:669:                if not isinstance(play, dict):
+  pipeline\ai_pipeline.py:670:                    raise RuntimeError(
+> pipeline\ai_pipeline.py:671:                        "Repair produced invalid Ansible Playbook: "
+  pipeline\ai_pipeline.py:672:                        f"play at index {index} must be a mapping."
+  pipeline\ai_pipeline.py:673:                    )
+  pipeline\ai_pipeline.py:674:
+  pipeline\ai_pipeline.py:675:                if "hosts" not in play:
+  pipeline\ai_pipeline.py:676:                    raise RuntimeError(
+> pipeline\ai_pipeline.py:677:                        "Repair produced invalid Ansible Playbook: "
+  pipeline\ai_pipeline.py:678:                        f"play at index {index} is missing 'hosts'."
+  pipeline\ai_pipeline.py:679:                    )
+  pipeline\ai_pipeline.py:680:
+  pipeline\ai_pipeline.py:681:                if "tasks" not in play:
+  pipeline\ai_pipeline.py:682:                    raise RuntimeError(
+> pipeline\ai_pipeline.py:683:                        "Repair produced invalid Ansible Playbook: "
+  pipeline\ai_pipeline.py:684:                        f"play at index {index} is missing 'tasks'."
+  pipeline\ai_pipeline.py:685:                    )
+  pipeline\ai_pipeline.py:686:
+  pipeline\ai_pipeline.py:687:                if not isinstance(play["tasks"], list):
+  pipeline\ai_pipeline.py:688:                    raise RuntimeError(
+> pipeline\ai_pipeline.py:689:                        "Repair produced invalid Ansible Playbook: "
+  pipeline\ai_pipeline.py:690:                        f"'tasks' at play index {index} must be a list."
+  pipeline\ai_pipeline.py:691:                    )
+  pipeline\ai_pipeline.py:692:
+  pipeline\ai_pipeline.py:693:            # Infrastructure contract validation
+  pipeline\ai_pipeline.py:694:            contract_errors = validate_infrastructure_playbook_contract(
+  pipeline\ai_pipeline.py:697:
+  pipeline\ai_pipeline.py:698:            if contract_errors:
+  pipeline\ai_pipeline.py:699:                print(
+> pipeline\ai_pipeline.py:700:                    "===== REPAIR CONTRACT VALIDATION FAILED ====="
+  pipeline\ai_pipeline.py:701:                )
+  pipeline\ai_pipeline.py:702:
+  pipeline\ai_pipeline.py:703:                for error in contract_errors:
+  pipeline\ai_pipeline.py:704:                    print(f"- {error}")
+  pipeline\ai_pipeline.py:705:
+  pipeline\ai_pipeline.py:708:                    + "\n".join(contract_errors)
+  pipeline\ai_pipeline.py:709:                )
+  pipeline\ai_pipeline.py:710:
+> pipeline\ai_pipeline.py:711:    print("===== REPAIR V2 RESULT =====")
+> pipeline\ai_pipeline.py:712:    print(repaired_file)
+  pipeline\ai_pipeline.py:713:    print("=============================")
+  pipeline\ai_pipeline.py:714:
+> pipeline\ai_pipeline.py:715:    return repaired_file
+  pipeline\ai_pipeline.py:716:
+  pipeline\ai_pipeline.py:717:
+  pipeline\ai_pipeline.py:718:def regenerate_file_only(path: str) -> str:
+  pipeline\ai_pipeline.py:719:    prompt = f"""
+  pipeline\ai_pipeline.py:720:path:
+  pipeline\ai_pipeline.py:942:    except json.JSONDecodeError:
+  pipeline\ai_pipeline.py:943:        print(
+  pipeline\ai_pipeline.py:944:            "Initial JSON parse failed. "
+> pipeline\ai_pipeline.py:945:            "Attempting JSON repair."
+  pipeline\ai_pipeline.py:946:        )
+  pipeline\ai_pipeline.py:947:
+  pipeline\ai_pipeline.py:948:        json_text = sanitize_json_string(json_text)
+  pipeline\ai_pipeline.py:949:        data = safe_json_loads(json_text)
+  pipeline\ai_pipeline.py:950:
+  pipeline\ai_pipeline.py:980:        ]
+  pipeline\ai_pipeline.py:981:
+  pipeline\ai_pipeline.py:982:        # ---------------------------------------------------------
+> pipeline\ai_pipeline.py:983:        # Repair V2 用の初期成果物を SAFE_ROOT に保存する。
+  pipeline\ai_pipeline.py:984:        # Contract validation より前に作業対象ファイルを確保する。
+  pipeline\ai_pipeline.py:985:        # ---------------------------------------------------------
+  pipeline\ai_pipeline.py:986:        for file_entry in data["files"]:
+  pipeline\ai_pipeline.py:987:            relative_path = normalize_generated_path(
+  pipeline\ai_pipeline.py:988:                file_entry["path"]
+  pipeline\ai_pipeline.py:997:
+  pipeline\ai_pipeline.py:998:
+  pipeline\ai_pipeline.py:999:        # ---------------------------------------------------------
+> pipeline\ai_pipeline.py:1000:        # Infrastructure Contract validation / repair
+  pipeline\ai_pipeline.py:1001:        # Generate直後に決定論的に検査する。
+  pipeline\ai_pipeline.py:1002:        # ---------------------------------------------------------
+  pipeline\ai_pipeline.py:1003:
+  pipeline\ai_pipeline.py:1004:        playbook_content = playbook_files[0]["content"]
+  pipeline\ai_pipeline.py:1005:
+  pipeline\ai_pipeline.py:1011:        except yaml.YAMLError as e:
+  pipeline\ai_pipeline.py:1012:            yaml_error = str(e)
+  pipeline\ai_pipeline.py:1013:
+> pipeline\ai_pipeline.py:1014:            repaired_files = repair_validation_errors(
+  pipeline\ai_pipeline.py:1015:                [
+  pipeline\ai_pipeline.py:1016:                    {
+  pipeline\ai_pipeline.py:1017:                        "type": "infrastructure_yaml",
+  pipeline\ai_pipeline.py:1018:                        "file": "ansible/playbook.yml",
+  pipeline\ai_pipeline.py:1019:                        "detail": yaml_error,
+  pipeline\ai_pipeline.py:1035:            )
+  pipeline\ai_pipeline.py:1036:
+  pipeline\ai_pipeline.py:1037:            for file_entry in data["files"]:
+> pipeline\ai_pipeline.py:1038:                repaired_content = repaired_files.get(
+  pipeline\ai_pipeline.py:1039:                    file_entry["path"]
+  pipeline\ai_pipeline.py:1040:                )
+  pipeline\ai_pipeline.py:1041:
+> pipeline\ai_pipeline.py:1042:                if repaired_content is not None:
+> pipeline\ai_pipeline.py:1043:                    file_entry["content"] = repaired_content
+  pipeline\ai_pipeline.py:1044:
+> pipeline\ai_pipeline.py:1045:            # Repair後のPlaybookを再取得して、
+  pipeline\ai_pipeline.py:1046:            # 必ずYAMLとして再検証する
+  pipeline\ai_pipeline.py:1047:            playbook_content = playbook_files[0]["content"]
+  pipeline\ai_pipeline.py:1048:
+  pipeline\ai_pipeline.py:1049:            try:
+  pipeline\ai_pipeline.py:1050:                parsed_playbook = yaml.safe_load(
+  pipeline\ai_pipeline.py:1051:                    playbook_content
+  pipeline\ai_pipeline.py:1052:                )
+  pipeline\ai_pipeline.py:1053:
+> pipeline\ai_pipeline.py:1054:            except yaml.YAMLError as repair_error:
+  pipeline\ai_pipeline.py:1055:                raise RuntimeError(
+> pipeline\ai_pipeline.py:1056:                    "Infrastructure Repair produced invalid YAML: "
+> pipeline\ai_pipeline.py:1057:                    f"{repair_error}"
+> pipeline\ai_pipeline.py:1058:                ) from repair_error
+  pipeline\ai_pipeline.py:1059:
+  pipeline\ai_pipeline.py:1060:        contract_errors = (
+  pipeline\ai_pipeline.py:1061:            validate_infrastructure_playbook_contract(
+  pipeline\ai_pipeline.py:1062:                parsed_playbook
+  pipeline\ai_pipeline.py:1063:            )
+  pipeline\ai_pipeline.py:1064:        )
+  pipeline\ai_pipeline.py:1065:
+  pipeline\ai_pipeline.py:1066:        if contract_errors:
+> pipeline\ai_pipeline.py:1067:            repaired_files = repair_validation_errors(
+  pipeline\ai_pipeline.py:1068:                [
+  pipeline\ai_pipeline.py:1069:                    {
+  pipeline\ai_pipeline.py:1070:                        "type": "infrastructure_contract",
+  pipeline\ai_pipeline.py:1071:                        "file": "ansible/playbook.yml",
+  pipeline\ai_pipeline.py:1072:                        "detail": error,
+  pipeline\ai_pipeline.py:1088:            )
+  pipeline\ai_pipeline.py:1089:
+  pipeline\ai_pipeline.py:1090:            for file_entry in data["files"]:
+> pipeline\ai_pipeline.py:1091:                repaired_content = repaired_files.get(
+  pipeline\ai_pipeline.py:1092:                    file_entry["path"]
+  pipeline\ai_pipeline.py:1093:                )
+  pipeline\ai_pipeline.py:1094:
+> pipeline\ai_pipeline.py:1095:                if repaired_content is not None:
+> pipeline\ai_pipeline.py:1096:                    file_entry["content"] = repaired_content
+  pipeline\ai_pipeline.py:1097:
+  pipeline\ai_pipeline.py:1098:    # ---------------------------------------------------------
+  pipeline\ai_pipeline.py:1099:    # Final generated JSON schema validation
+  pipeline\ai_pipeline.py:1100:    # ---------------------------------------------------------
+  pipeline\ai_pipeline.py:1101:
+  pipeline\ai_pipeline.py:1113:        print("\nSchema validation failed")
+  pipeline\ai_pipeline.py:1114:        print(e)
+  pipeline\ai_pipeline.py:1115:
+> pipeline\ai_pipeline.py:1116:        repair_prompt = f"""
+  pipeline\ai_pipeline.py:1117:Validation error:
+  pipeline\ai_pipeline.py:1118:{str(e)}
+  pipeline\ai_pipeline.py:1119:
+  pipeline\ai_pipeline.py:1120:Current generated JSON:
+  pipeline\ai_pipeline.py:1121:{json.dumps(data, ensure_ascii=False, indent=2)}
+  pipeline\ai_pipeline.py:1124:{context['format_rules']}
+  pipeline\ai_pipeline.py:1125:"""
+  pipeline\ai_pipeline.py:1126:
+> pipeline\ai_pipeline.py:1127:        repair_raw = ollama_chat(
+  pipeline\ai_pipeline.py:1128:            messages=[
+  pipeline\ai_pipeline.py:1129:                {
+  pipeline\ai_pipeline.py:1130:                    "role": "system",
+  pipeline\ai_pipeline.py:1131:                    "content": generation_fixer_prompt,
+  pipeline\ai_pipeline.py:1132:                },
+  pipeline\ai_pipeline.py:1133:                {
+  pipeline\ai_pipeline.py:1134:                    "role": "user",
+> pipeline\ai_pipeline.py:1135:                    "content": repair_prompt,
+  pipeline\ai_pipeline.py:1136:                },
+  pipeline\ai_pipeline.py:1137:            ],
+  pipeline\ai_pipeline.py:1138:            temperature=0.0,
+  pipeline\ai_pipeline.py:1139:            num_predict=2048,
+  pipeline\ai_pipeline.py:1140:            think=False,
+  pipeline\ai_pipeline.py:1141:        )
+  pipeline\ai_pipeline.py:1142:
+> pipeline\ai_pipeline.py:1143:        if not repair_raw:
+  pipeline\ai_pipeline.py:1144:            raise RuntimeError(
+> pipeline\ai_pipeline.py:1145:                "Schema repair returned empty response."
+  pipeline\ai_pipeline.py:1146:            )
+  pipeline\ai_pipeline.py:1147:
+> pipeline\ai_pipeline.py:1148:        repair_json = extract_json(repair_raw)
+> pipeline\ai_pipeline.py:1149:        repair_json = sanitize_json_string(
+> pipeline\ai_pipeline.py:1150:            repair_json
+  pipeline\ai_pipeline.py:1151:        )
+  pipeline\ai_pipeline.py:1152:
+> pipeline\ai_pipeline.py:1153:        data = safe_json_loads(repair_json)
+  pipeline\ai_pipeline.py:1154:
+  pipeline\ai_pipeline.py:1155:        validate(
+  pipeline\ai_pipeline.py:1156:            instance=data,
+  pipeline\ai_pipeline.py:1157:            schema=OUTPUT_SCHEMA,
+  pipeline\ai_pipeline.py:1158:        )
+  pipeline\ai_pipeline.py:1385:        Return a new Review JSON object that satisfies REVIEW_SCHEMA.
+  pipeline\ai_pipeline.py:1386:
+  pipeline\ai_pipeline.py:1387:        Do not change the generated artifact.
+> pipeline\ai_pipeline.py:1388:        Do not perform artifact repair.
+  pipeline\ai_pipeline.py:1389:        Do not return explanations.
+  pipeline\ai_pipeline.py:1390:        Return JSON only.
+  pipeline\ai_pipeline.py:1391:        """
+  pipeline\ai_pipeline.py:1392:
+  pipeline\ai_pipeline.py:1393:            print("\n===== REVIEW SCHEMA RETRY =====")
+  pipeline\ai_pipeline.py:1457:        Return a new Review JSON object that satisfies REVIEW_SCHEMA.
+  pipeline\ai_pipeline.py:1458:
+  pipeline\ai_pipeline.py:1459:        Do not change the generated artifact.
+> pipeline\ai_pipeline.py:1460:        Do not perform artifact repair.
+  pipeline\ai_pipeline.py:1461:        Do not return explanations.
+  pipeline\ai_pipeline.py:1462:        Return JSON only.
+  pipeline\ai_pipeline.py:1463:        """
+  pipeline\ai_pipeline.py:1464:
+  pipeline\ai_pipeline.py:1465:            print("\n===== REVIEW SCHEMA RETRY =====")
+  pipeline\ai_pipeline.py:1598:TASK REVIEW RULES:
+  pipeline\ai_pipeline.py:1599:{context["task_review_rules"]}
+  pipeline\ai_pipeline.py:1600:
+> pipeline\ai_pipeline.py:1601:Repair the current generated JSON only for the supplied blocking review risks.
+  pipeline\ai_pipeline.py:1602:
+  pipeline\ai_pipeline.py:1603:Preserve all valid existing content.
+  pipeline\ai_pipeline.py:1604:Do not change unrelated valid content.
+  pipeline\ai_pipeline.py:1605:Do not add unrequested files.
+  pipeline\ai_pipeline.py:1606:Do not remove required files.
+  pipeline\ai_pipeline.py:1724:                print(f"Skip empty content: {relative_path}")
+  pipeline\ai_pipeline.py:1725:                continue
+  pipeline\ai_pipeline.py:1726:
+> pipeline\ai_pipeline.py:1727:            # Repair V2へ渡すため、Generate直後の元ファイルを保持する。
+  pipeline\ai_pipeline.py:1728:            # YAML Auto Fixが失敗しても、この内容を失わない。
+  pipeline\ai_pipeline.py:1729:            original_content = content
+  pipeline\ai_pipeline.py:1730:
+  pipeline\ai_pipeline.py:1731:            if relative_path.endswith((".yml", ".yaml")):
+  pipeline\ai_pipeline.py:1732:                print("===== YAML INPUT =====")
+  pipeline\ai_pipeline.py:1743:                    parsed_yaml = yaml.safe_load(content)
+  pipeline\ai_pipeline.py:1744:                except yaml.YAMLError:
+  pipeline\ai_pipeline.py:1745:                    try:
+> pipeline\ai_pipeline.py:1746:                        content = repair_yaml_text(content)
+  pipeline\ai_pipeline.py:1747:                        parsed_yaml = yaml.safe_load(content)
+> pipeline\ai_pipeline.py:1748:                        print("\n=== YAML REPAIRED LOCALLY ===")
+  pipeline\ai_pipeline.py:1749:                    except yaml.YAMLError as e:
+  pipeline\ai_pipeline.py:1750:                        print("\n=== INVALID YAML BEFORE SAVE ===")
+  pipeline\ai_pipeline.py:1751:                        print(content)
+  pipeline\ai_pipeline.py:1752:
+  pipeline\ai_pipeline.py:1753:                        yaml_fix_prompt = f"""Fix this YAML.
+  pipeline\ai_pipeline.py:1768:                                        {
+  pipeline\ai_pipeline.py:1769:                                            "role": "system",
+  pipeline\ai_pipeline.py:1770:                                            "content": Path(
+> pipeline\ai_pipeline.py:1771:                                                "prompts/yaml_repair.txt"
+  pipeline\ai_pipeline.py:1772:                                            ).read_text(encoding="utf-8"),
+  pipeline\ai_pipeline.py:1773:                                        },
+  pipeline\ai_pipeline.py:1774:                                        {
+  pipeline\ai_pipeline.py:1775:                                            "role": "user",
+  pipeline\ai_pipeline.py:1776:                                            "content": yaml_fix_prompt,
+  pipeline\ai_pipeline.py:1830:            })
+  pipeline\ai_pipeline.py:1831:
+  pipeline\ai_pipeline.py:1832:            # -------------------------------------------------
+> pipeline\ai_pipeline.py:1833:            # Repair V2 のために、元のファイル内容を保持する。
+  pipeline\ai_pipeline.py:1834:            #
+  pipeline\ai_pipeline.py:1835:            # YAML が不正でも「ファイルそのもの」を消してはいけない。
+> pipeline\ai_pipeline.py:1836:            # Repair V2 は現在ファイルを読み、
+  pipeline\ai_pipeline.py:1837:            # 最小限の old -> new 変更を生成する設計だからである。
+  pipeline\ai_pipeline.py:1838:            # -------------------------------------------------
+  pipeline\ai_pipeline.py:1839:
+  pipeline\ai_pipeline.py:1840:            try:
+  pipeline\ai_pipeline.py:1841:                if relative_path and original_content:
+  pipeline\ai_pipeline.py:1845:                        original_content,
+  pipeline\ai_pipeline.py:1846:                    )
+  pipeline\ai_pipeline.py:1847:                    print(
+> pipeline\ai_pipeline.py:1848:                        f"Preserved original invalid file for repair: "
+  pipeline\ai_pipeline.py:1849:                        f"{relative_path}"
+  pipeline\ai_pipeline.py:1850:                    )
+  pipeline\ai_pipeline.py:1851:            except Exception as write_error:
+  pipeline\ai_pipeline.py:1852:                print(
+  pipeline\ai_pipeline.py:1853:                    f"Failed to preserve invalid file "
+  pipeline\ai_pipeline.py:1880:
+  pipeline\ai_pipeline.py:1881:
+  pipeline\ai_pipeline.py:1882:# =========================================================
+> pipeline\ai_pipeline.py:1883:# Repair
+  pipeline\ai_pipeline.py:1884:# =========================================================
+  pipeline\ai_pipeline.py:1885:
+  pipeline\ai_pipeline.py:1886:def extract_file_content_from_response(content: str) -> str:
+  pipeline\ai_pipeline.py:1887:    """JSON 形式で返された再生成レスポンスからファイル本文を抽出する。"""
+  pipeline\ai_pipeline.py:1888:
+  pipeline\ai_pipeline.py:1909:    Validate mandatory runtime wiring for ansible/playbook.yml.
+  pipeline\ai_pipeline.py:1910:
+  pipeline\ai_pipeline.py:1911:    These checks protect infrastructure invariants from accidental
+> pipeline\ai_pipeline.py:1912:    removal by the Repair Agent.
+  pipeline\ai_pipeline.py:1913:    """
+  pipeline\ai_pipeline.py:1914:
+  pipeline\ai_pipeline.py:1915:    violations: List[str] = []
+  pipeline\ai_pipeline.py:1916:
+  pipeline\ai_pipeline.py:1917:    required_host_html = "/home/vboxuser/containers/html"
+  pipeline\ai_pipeline.py:2130:content: str,
+  pipeline\ai_pipeline.py:2131:target_file: str,
+  pipeline\ai_pipeline.py:2132:) -> str:
+> pipeline\ai_pipeline.py:2133:    """Apply extension-specific deterministic repair to regenerated content."""
+  pipeline\ai_pipeline.py:2134:
+  pipeline\ai_pipeline.py:2135:    if not target_file.endswith((".yml", ".yaml")):
+  pipeline\ai_pipeline.py:2136:        return content
+  pipeline\ai_pipeline.py:2137:
+> pipeline\ai_pipeline.py:2138:    repaired = repair_podman_yaml_content(content)
+  pipeline\ai_pipeline.py:2139:
+  pipeline\ai_pipeline.py:2140:    # YAML document separators are not part of the generated file
+  pipeline\ai_pipeline.py:2141:    # contract for this project. Remove accidental leading/trailing
+  pipeline\ai_pipeline.py:2142:    # separators deterministically before YAML validation.
+> pipeline\ai_pipeline.py:2143:    lines = repaired.splitlines()
+  pipeline\ai_pipeline.py:2144:
+  pipeline\ai_pipeline.py:2145:    while lines and lines[0].strip() == "---":
+  pipeline\ai_pipeline.py:2146:        lines.pop(0)
+  pipeline\ai_pipeline.py:2147:
+  pipeline\ai_pipeline.py:2148:    while lines and lines[-1].strip() == "---":
+  pipeline\ai_pipeline.py:2149:        lines.pop()
+  pipeline\ai_pipeline.py:2150:
+> pipeline\ai_pipeline.py:2151:    repaired = "\n".join(lines).strip() + "\n"
+  pipeline\ai_pipeline.py:2152:
+  pipeline\ai_pipeline.py:2153:    if target_file == "ansible/playbook.yml":
+> pipeline\ai_pipeline.py:2154:        repaired = repaired.replace(
+  pipeline\ai_pipeline.py:2155:            "src:/home/vboxuser/containers/html:/var/www/html",
+  pipeline\ai_pipeline.py:2156:            "/home/vboxuser/containers/html:/var/www/html",
+  pipeline\ai_pipeline.py:2157:        )
+  pipeline\ai_pipeline.py:2158:
+> pipeline\ai_pipeline.py:2159:    return repaired
+  pipeline\ai_pipeline.py:2160:
+  pipeline\ai_pipeline.py:2161:def discover_php_files(root: Path) -> List[Path]:
+  pipeline\ai_pipeline.py:2162:    """Discover generated PHP files under SAFE_ROOT/src."""
+  pipeline\ai_pipeline.py:2163:    php_dir = root / "src"
+  pipeline\ai_pipeline.py:2164:    if not php_dir.exists():
+  pipeline\ai_pipeline.py:2167:    return sorted([p for p in php_dir.glob("*.php") if p.is_file()])
+  pipeline\ai_pipeline.py:2168:
+  pipeline\ai_pipeline.py:2169:
+> pipeline\ai_pipeline.py:2170:def analyze_browser_validation(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+> pipeline\ai_pipeline.py:2171:    """Browser Validation の結果を解析して問題を返す。"""
+  pipeline\ai_pipeline.py:2172:
+  pipeline\ai_pipeline.py:2173:    issues: List[Dict[str, Any]] = []
+  pipeline\ai_pipeline.py:2174:    status = payload.get("status")
+  pipeline\ai_pipeline.py:2175:    body = payload.get("body") or ""
+  pipeline\ai_pipeline.py:2176:    headers = payload.get("headers") or {}
+  pipeline\ai_pipeline.py:2182:            "category": "infrastructure",
+  pipeline\ai_pipeline.py:2183:            "severity": "blocker",
+  pipeline\ai_pipeline.py:2184:            "detail": "PHP PDO MySQL driver is missing. Install pdo_mysql in PHP co
+ntainer via ansible/playbook.yml.",
+> pipeline\ai_pipeline.py:2185:            "repair_target": "ansible/playbook.yml",
+  pipeline\ai_pipeline.py:2186:        })
+  pipeline\ai_pipeline.py:2187:
+  pipeline\ai_pipeline.py:2188:    elif payload.get("success") is False and not (
+  pipeline\ai_pipeline.py:2189:        isinstance(status, int) and status >= 400
+  pipeline\ai_pipeline.py:2190:    ):
+  pipeline\ai_pipeline.py:2191:        issues.append({
+> pipeline\ai_pipeline.py:2192:            "type": "browser_connection_error",
+  pipeline\ai_pipeline.py:2193:            "category": "infrastructure",
+  pipeline\ai_pipeline.py:2194:            "severity": "blocker",
+> pipeline\ai_pipeline.py:2195:            "detail": payload.get("stderr", "Browser validation failed"),
+> pipeline\ai_pipeline.py:2196:            "repair_target": "ansible/playbook.yml",
+  pipeline\ai_pipeline.py:2197:        })
+  pipeline\ai_pipeline.py:2198:
+  pipeline\ai_pipeline.py:2199:    if isinstance(status, int) and status >= 400:
+  pipeline\ai_pipeline.py:2200:        issues.append({
+> pipeline\ai_pipeline.py:2201:            "type": "browser_status",
+  pipeline\ai_pipeline.py:2202:            "category": "application" if status == 404 else "infrastructure",
+  pipeline\ai_pipeline.py:2203:            "severity": "warning",
+  pipeline\ai_pipeline.py:2204:            "detail": f"HTTP status {status}",
+> pipeline\ai_pipeline.py:2205:            "repair_target": "src/index.php" if status == 404 else "ansible/playboo
+k.yml",
+  pipeline\ai_pipeline.py:2206:        })
+  pipeline\ai_pipeline.py:2207:
+  pipeline\ai_pipeline.py:2208:    if isinstance(body, str) and (
+  pipeline\ai_pipeline.py:2209:        "fatal error" in body_text
+  pipeline\ai_pipeline.py:2210:        or "parse error" in body_text
+  pipeline\ai_pipeline.py:2211:        or "uncaught" in body_text
+  pipeline\ai_pipeline.py:2212:    ):
+> pipeline\ai_pipeline.py:2213:        repair_target = "src/index.php"
+  pipeline\ai_pipeline.py:2214:
+  pipeline\ai_pipeline.py:2215:        # PHP runtime error に実際の発生ファイルが含まれている場合は、
+> pipeline\ai_pipeline.py:2216:        # そのファイルを Repair 対象にする。
+  pipeline\ai_pipeline.py:2217:        #
+  pipeline\ai_pipeline.py:2218:        # 例:
+  pipeline\ai_pipeline.py:2219:        #   /var/www/html/config.php:4
+  pipeline\ai_pipeline.py:2220:        #   /var/www/html/config.php on line 4
+  pipeline\ai_pipeline.py:2221:        match = re.search(
+  pipeline\ai_pipeline.py:2225:        )
+  pipeline\ai_pipeline.py:2226:
+  pipeline\ai_pipeline.py:2227:        if match:
+> pipeline\ai_pipeline.py:2228:            repair_target = f"src/{match.group(1)}"
+  pipeline\ai_pipeline.py:2229:
+  pipeline\ai_pipeline.py:2230:        issues.append({
+> pipeline\ai_pipeline.py:2231:            "type": "browser_body",
+  pipeline\ai_pipeline.py:2232:            "category": "application",
+  pipeline\ai_pipeline.py:2233:            "severity": "warning",
+  pipeline\ai_pipeline.py:2234:            "detail": body,
+> pipeline\ai_pipeline.py:2235:            "repair_target": repair_target,
+  pipeline\ai_pipeline.py:2236:        })
+  pipeline\ai_pipeline.py:2237:
+  pipeline\ai_pipeline.py:2238:    content_type = headers.get("Content-Type") if isinstance(headers, dict) else No
+ne
+  pipeline\ai_pipeline.py:2239:    if isinstance(content_type, str) and "text/html" in content_type.lower() and no
+t body.strip():
+  pipeline\ai_pipeline.py:2240:        issues.append({
+> pipeline\ai_pipeline.py:2241:            "type": "browser_empty",
+  pipeline\ai_pipeline.py:2242:            "category": "application",
+  pipeline\ai_pipeline.py:2243:            "severity": "warning",
+  pipeline\ai_pipeline.py:2244:            "detail": "HTML response body is empty",
+> pipeline\ai_pipeline.py:2245:            "repair_target": "src/index.php",
+  pipeline\ai_pipeline.py:2246:        })
+  pipeline\ai_pipeline.py:2247:
+  pipeline\ai_pipeline.py:2248:    return issues
+  pipeline\ai_pipeline.py:2249:
+  pipeline\ai_pipeline.py:2250:
+  pipeline\ai_pipeline.py:2274:            "category": "infrastructure",
+  pipeline\ai_pipeline.py:2275:            "severity": "blocker",
+  pipeline\ai_pipeline.py:2276:            "detail": combined,
+> pipeline\ai_pipeline.py:2277:            "repair_target": "ansible/playbook.yml",
+  pipeline\ai_pipeline.py:2278:        })
+  pipeline\ai_pipeline.py:2279:    else:
+  pipeline\ai_pipeline.py:2280:        issues.append({
+  pipeline\ai_pipeline.py:2281:            "type": "php_lint",
+  pipeline\ai_pipeline.py:2282:            "category": "application",
+  pipeline\ai_pipeline.py:2283:            "severity": "warning",
+  pipeline\ai_pipeline.py:2284:            "detail": combined or "PHP lint failed",
+> pipeline\ai_pipeline.py:2285:            "repair_target": "src/index.php",
+  pipeline\ai_pipeline.py:2286:        })
+  pipeline\ai_pipeline.py:2287:
+  pipeline\ai_pipeline.py:2288:    return issues
+  pipeline\ai_pipeline.py:2289:
+  pipeline\ai_pipeline.py:2290:
+  pipeline\ai_pipeline.py:2405:    return {"success": code == 0, "exit_code": code, "stdout": stdout or "", "stder
+r": stderr or ""}
+  pipeline\ai_pipeline.py:2406:
+  pipeline\ai_pipeline.py:2407:
+> pipeline\ai_pipeline.py:2408:def repair_validation_errors(
+  pipeline\ai_pipeline.py:2409:    validation_errors: List[dict],
+  pipeline\ai_pipeline.py:2410:    validation_stdout: str,
+  pipeline\ai_pipeline.py:2411:    validation_stderr: str,
+  pipeline\ai_pipeline.py:2412:    architecture: str,
+  pipeline\ai_pipeline.py:2413:    rules: str,
+  pipeline\ai_pipeline.py:2424:
+  pipeline\ai_pipeline.py:2425:    # 同一ファイルは1回だけ修正
+  pipeline\ai_pipeline.py:2426:    target_files = set()
+> pipeline\ai_pipeline.py:2427:    repaired_files: Dict[str, str] = {}
+  pipeline\ai_pipeline.py:2428:
+  pipeline\ai_pipeline.py:2429:    for err in validation_errors:
+  pipeline\ai_pipeline.py:2430:        file_value = err.get("file")
+  pipeline\ai_pipeline.py:2431:
+  pipeline\ai_pipeline.py:2432:        if target_file_override:
+  pipeline\ai_pipeline.py:2459:
+  pipeline\ai_pipeline.py:2460:            except ValueError:
+  pipeline\ai_pipeline.py:2461:                raise RuntimeError(
+> pipeline\ai_pipeline.py:2462:                    f"Repair target is outside SAFE_ROOT: {file_value}"
+  pipeline\ai_pipeline.py:2463:                )
+  pipeline\ai_pipeline.py:2464:
+  pipeline\ai_pipeline.py:2465:    for target_file in target_files:
+  pipeline\ai_pipeline.py:2466:        print(f"[ERROR] {target_file}")
+  pipeline\ai_pipeline.py:2467:
+  pipeline\ai_pipeline.py:2469:
+  pipeline\ai_pipeline.py:2470:        if not target_path.exists():
+  pipeline\ai_pipeline.py:2471:            raise RuntimeError(
+> pipeline\ai_pipeline.py:2472:                f"Repair target does not exist: {target_file}"
+  pipeline\ai_pipeline.py:2473:            )
+  pipeline\ai_pipeline.py:2474:
+  pipeline\ai_pipeline.py:2475:        current_content = target_path.read_text(encoding="utf-8")
+  pipeline\ai_pipeline.py:2476:
+  pipeline\ai_pipeline.py:2477:        # ============================================================
+> pipeline\ai_pipeline.py:2478:        # Deterministic Contract Repair
+  pipeline\ai_pipeline.py:2479:        # ============================================================
+  pipeline\ai_pipeline.py:2480:        #
+  pipeline\ai_pipeline.py:2481:        # 既知の Infrastructure Contract 違反は LLM に修正させない。
+  pipeline\ai_pipeline.py:2482:        # 今回は podman_pod の旧/誤キーだけを機械的に修正する。
+  pipeline\ai_pipeline.py:2483:        #
+  pipeline\ai_pipeline.py:2496:            )
+  pipeline\ai_pipeline.py:2497:
+  pipeline\ai_pipeline.py:2498:        if deterministic_content != current_content:
+> pipeline\ai_pipeline.py:2499:            print("===== DETERMINISTIC CONTRACT REPAIR =====")
+  pipeline\ai_pipeline.py:2500:            print(f"Target: {target_file}")
+  pipeline\ai_pipeline.py:2501:            print("Replace: container/pod_name: lamp-pod")
+  pipeline\ai_pipeline.py:2502:            print("With:    name: lamp-pod")
+  pipeline\ai_pipeline.py:2503:
+  pipeline\ai_pipeline.py:2504:            safe_write_file(
+  pipeline\ai_pipeline.py:2507:                deterministic_content,
+  pipeline\ai_pipeline.py:2508:            )
+  pipeline\ai_pipeline.py:2509:
+> pipeline\ai_pipeline.py:2510:            repaired_files[target_file] = deterministic_content
+  pipeline\ai_pipeline.py:2511:
+> pipeline\ai_pipeline.py:2512:            print("===== FILE AFTER DETERMINISTIC REPAIR =====")
+  pipeline\ai_pipeline.py:2513:            print(
+  pipeline\ai_pipeline.py:2514:                deterministic_content[:600]
+  pipeline\ai_pipeline.py:2515:            )
+  pipeline\ai_pipeline.py:2516:
+> pipeline\ai_pipeline.py:2517:            print("Deterministic repair completed.")
+  pipeline\ai_pipeline.py:2518:
+  pipeline\ai_pipeline.py:2519:            # 今回は既知の Contract 違反を修正できたので、
+> pipeline\ai_pipeline.py:2520:            # LLM Repair は実行しない。
+  pipeline\ai_pipeline.py:2521:            continue
+  pipeline\ai_pipeline.py:2522:
+  pipeline\ai_pipeline.py:2523:        # ============================================================
+> pipeline\ai_pipeline.py:2524:        # AI Repair fallback
+  pipeline\ai_pipeline.py:2525:        # ============================================================
+  pipeline\ai_pipeline.py:2526:
+  pipeline\ai_pipeline.py:2527:        print("BEFORE REGENERATE")
+  pipeline\ai_pipeline.py:2528:
+> pipeline\ai_pipeline.py:2529:        # Runtime validation issues are the primary repair evidence.
+> pipeline\ai_pipeline.py:2530:        # Preserve all issues, but explicitly prioritize browser/runtime
+> pipeline\ai_pipeline.py:2531:        # failures so the Repair Agent does not overlook them.
+  pipeline\ai_pipeline.py:2532:        prioritized_errors = sorted(
+  pipeline\ai_pipeline.py:2533:            validation_errors,
+  pipeline\ai_pipeline.py:2534:            key=lambda issue: (
+> pipeline\ai_pipeline.py:2535:                0 if issue.get("type") == "browser_status" else 1,
+  pipeline\ai_pipeline.py:2536:                0 if issue.get("severity") == "blocker" else 1,
+  pipeline\ai_pipeline.py:2537:            ),
+  pipeline\ai_pipeline.py:2538:        )
+  pipeline\ai_pipeline.py:2539:
+  pipeline\ai_pipeline.py:2540:        regeneration_context = {
+  pipeline\ai_pipeline.py:2544:                prioritized_errors[0] if prioritized_errors else {}
+  pipeline\ai_pipeline.py:2545:            ),
+  pipeline\ai_pipeline.py:2546:
+> pipeline\ai_pipeline.py:2547:            # Runtime validation の実測結果を Repair V2 に渡す
+  pipeline\ai_pipeline.py:2548:            "stdout": validation_stdout,
+  pipeline\ai_pipeline.py:2549:            "stderr": validation_stderr,
+  pipeline\ai_pipeline.py:2550:
+  pipeline\ai_pipeline.py:2551:            "available_php_files": available_php_files or [],
+  pipeline\ai_pipeline.py:2552:
+  pipeline\ai_pipeline.py:2554:            "deploy_evidence": deploy_evidence or {},
+  pipeline\ai_pipeline.py:2555:            "deploy_diagnosis": deploy_diagnosis or {},
+  pipeline\ai_pipeline.py:2556:
+> pipeline\ai_pipeline.py:2557:            # Browser / PHP lint など、今回の修正対象を決める実測結果
+  pipeline\ai_pipeline.py:2558:            "validation_evidence": {
+  pipeline\ai_pipeline.py:2559:                "stdout": validation_stdout,
+  pipeline\ai_pipeline.py:2560:                "stderr": validation_stderr,
+  pipeline\ai_pipeline.py:2561:                "errors": validation_errors,
+  pipeline\ai_pipeline.py:2562:            },
+  pipeline\ai_pipeline.py:2575:        )
+  pipeline\ai_pipeline.py:2576:
+  pipeline\ai_pipeline.py:2577:        if regenerated is None:
+> pipeline\ai_pipeline.py:2578:            print(f"Repair did not modify {target_file}.")
+  pipeline\ai_pipeline.py:2579:            continue
+  pipeline\ai_pipeline.py:2580:
+  pipeline\ai_pipeline.py:2581:        regenerated = postprocess_regenerated_file_content(
+  pipeline\ai_pipeline.py:2582:            regenerated,
+  pipeline\ai_pipeline.py:2583:            target_file,
+  pipeline\ai_pipeline.py:2600:            regenerated,
+  pipeline\ai_pipeline.py:2601:        )
+  pipeline\ai_pipeline.py:2602:
+> pipeline\ai_pipeline.py:2603:        repaired_files[target_file] = regenerated
+  pipeline\ai_pipeline.py:2604:
+  pipeline\ai_pipeline.py:2605:        print("AFTER WRITE")
+  pipeline\ai_pipeline.py:2606:        print("===== FILE AFTER WRITE =====")
+  pipeline\ai_pipeline.py:2607:        print(
+  pipeline\ai_pipeline.py:2608:            (safe_root / target_file).read_text(
+  pipeline\ai_pipeline.py:2610:            )[:600]
+  pipeline\ai_pipeline.py:2611:        )
+  pipeline\ai_pipeline.py:2612:
+> pipeline\ai_pipeline.py:2613:        print("Repair completed.")
+  pipeline\ai_pipeline.py:2614:
+> pipeline\ai_pipeline.py:2615:    return repaired_files
+  pipeline\ai_pipeline.py:2616:
+> pipeline\ai_pipeline.py:2617:def repair_publish_port(playbook_path):
+  pipeline\ai_pipeline.py:2618:    text = Path(playbook_path).read_text(encoding="utf-8")
+  pipeline\ai_pipeline.py:2619:
+  pipeline\ai_pipeline.py:2620:    text = text.replace(
+  pipeline\ai_pipeline.py:2621:        "- 80:80",
+  pipeline\ai_pipeline.py:2622:        "- 8080:80"
+  pipeline\ai_pipeline.py:2702:                "when the pod is created."
+  pipeline\ai_pipeline.py:2703:            ),
+  pipeline\ai_pipeline.py:2704:            "confidence": 0.99,
+> pipeline\ai_pipeline.py:2705:            "repair_hint": (
+  pipeline\ai_pipeline.py:2706:                "Move the web port publish configuration from "
+  pipeline\ai_pipeline.py:2707:                "containers.podman.podman_container to "
+  pipeline\ai_pipeline.py:2708:                "containers.podman.podman_pod in ansible/playbook.yml."
+  pipeline\ai_pipeline.py:2709:            ),
+> pipeline\ai_pipeline.py:2710:            "repair_target": "ansible/playbook.yml",
+  pipeline\ai_pipeline.py:2711:        }
+  pipeline\ai_pipeline.py:2712:
+  pipeline\ai_pipeline.py:2713:    else:
+  pipeline\ai_pipeline.py:2714:        # -----------------------------------------------------
+  pipeline\ai_pipeline.py:2715:        # Unknown deployment failure -> perform normal RCA
+  pipeline\ai_pipeline.py:2776:    deploy_result = {}
+  pipeline\ai_pipeline.py:2777:    deploy_evidence = {}
+  pipeline\ai_pipeline.py:2778:    deploy_diagnosis = {}
+> pipeline\ai_pipeline.py:2779:    browser_issues: List[Dict[str, Any]] = []
+  pipeline\ai_pipeline.py:2780:    lint_issues: List[Dict[str, Any]] = []
+  pipeline\ai_pipeline.py:2781:
+  pipeline\ai_pipeline.py:2782:    data, raw_output = generate_initial_data(
+  pipeline\ai_pipeline.py:2783:        context,
+  pipeline\ai_pipeline.py:2784:        task_name,
+  pipeline\ai_pipeline.py:2942:            break
+  pipeline\ai_pipeline.py:2943:
+  pipeline\ai_pipeline.py:2944:        if attempt >= 1:
+> pipeline\ai_pipeline.py:2945:            print("Validation repair failed twice. Stop.")
+  pipeline\ai_pipeline.py:2946:            break
+  pipeline\ai_pipeline.py:2947:
+> pipeline\ai_pipeline.py:2948:        repair_validation_errors(
+  pipeline\ai_pipeline.py:2949:            validation_errors,
+  pipeline\ai_pipeline.py:2950:            stdout,
+  pipeline\ai_pipeline.py:2951:            stderr,
+  pipeline\ai_pipeline.py:2952:            context["architecture"],
+  pipeline\ai_pipeline.py:2953:            context["rules"],
+  pipeline\ai_pipeline.py:2962:        print(json.dumps(validation_errors, indent=2, ensure_ascii=False))
+  pipeline\ai_pipeline.py:2963:        return False
+  pipeline\ai_pipeline.py:2964:
+> pipeline\ai_pipeline.py:2965:    # repair完了後に転送
+  pipeline\ai_pipeline.py:2966:    print(playbook_file.read_text())
+  pipeline\ai_pipeline.py:2967:    print("===== SCP TO ANSIBLE CONTROL NODE =====")
+  pipeline\ai_pipeline.py:2968:    run_command([
+  pipeline\ai_pipeline.py:2969:        "scp",
+  pipeline\ai_pipeline.py:2970:        "-r",
+  pipeline\ai_pipeline.py:2990:        for e in remote_errors:
+  pipeline\ai_pipeline.py:2991:            print(e)
+  pipeline\ai_pipeline.py:2992:
+> pipeline\ai_pipeline.py:2993:        # Remote validation error を Infrastructure Repair に渡す
+  pipeline\ai_pipeline.py:2994:        #
+  pipeline\ai_pipeline.py:2995:        # Remote Validation の生ログを最優先の証拠として扱う。
+  pipeline\ai_pipeline.py:2996:        # LLM reviewer の diagnosis は Remote Validation の実エラーより
+  pipeline\ai_pipeline.py:2997:        # 優先してはいけない。
+  pipeline\ai_pipeline.py:2998:        remote_error_text = (
+  pipeline\ai_pipeline.py:3013:                    "a mapping/dictionary."
+  pipeline\ai_pipeline.py:3014:                ),
+  pipeline\ai_pipeline.py:3015:                "confidence": 1.0,
+> pipeline\ai_pipeline.py:3016:                "repair_hint": (
+  pipeline\ai_pipeline.py:3017:                    "Change env from list syntax to mapping syntax. "
+  pipeline\ai_pipeline.py:3018:                    "For example: "
+  pipeline\ai_pipeline.py:3019:                    "env:\\n"
+  pipeline\ai_pipeline.py:3020:                    "  MYSQL_ROOT_PASSWORD: secret"
+  pipeline\ai_pipeline.py:3021:                ),
+> pipeline\ai_pipeline.py:3022:                "repair_target": "ansible/playbook.yml",
+  pipeline\ai_pipeline.py:3023:            }
+  pipeline\ai_pipeline.py:3024:
+  pipeline\ai_pipeline.py:3025:        regeneration_context = {
+  pipeline\ai_pipeline.py:3026:            "source": "remote_validation",
+  pipeline\ai_pipeline.py:3027:            "errors": remote_errors,
+  pipeline\ai_pipeline.py:3039:            "contract_feedback": "",
+  pipeline\ai_pipeline.py:3040:        }
+  pipeline\ai_pipeline.py:3041:
+> pipeline\ai_pipeline.py:3042:        repair_target = "ansible/playbook.yml"
+  pipeline\ai_pipeline.py:3043:
+> pipeline\ai_pipeline.py:3044:        print(f"===== REMOTE VALIDATION REPAIR: {repair_target} =====")
+  pipeline\ai_pipeline.py:3045:
+> pipeline\ai_pipeline.py:3046:        repair_attempts = 2
+  pipeline\ai_pipeline.py:3047:        regenerated = None
+  pipeline\ai_pipeline.py:3048:
+> pipeline\ai_pipeline.py:3049:        for repair_attempt in range(repair_attempts):
+  pipeline\ai_pipeline.py:3050:            try:
+  pipeline\ai_pipeline.py:3051:                print(
+> pipeline\ai_pipeline.py:3052:                    f"\n===== REGENERATE {repair_target} "
+> pipeline\ai_pipeline.py:3053:                    f"USING AI (auto-repair {repair_attempt + 1}/{repair_attempts})
+ ====="
+  pipeline\ai_pipeline.py:3054:                )
+  pipeline\ai_pipeline.py:3055:
+  pipeline\ai_pipeline.py:3056:                regenerated = regenerate_file_with_context(
+> pipeline\ai_pipeline.py:3057:                    repair_target,
+  pipeline\ai_pipeline.py:3058:                    context["architecture"],
+  pipeline\ai_pipeline.py:3059:                    regeneration_context,
+  pipeline\ai_pipeline.py:3060:                    context["rules"],
+  pipeline\ai_pipeline.py:3061:                    context["task_rules"],
+  pipeline\ai_pipeline.py:3062:                    context["format_rules"],
+  pipeline\ai_pipeline.py:3064:
+  pipeline\ai_pipeline.py:3065:                if regenerated is None:
+  pipeline\ai_pipeline.py:3066:                    raise RuntimeError(
+> pipeline\ai_pipeline.py:3067:                        f"Regeneration returned None: {repair_target}"
+  pipeline\ai_pipeline.py:3068:                    )
+  pipeline\ai_pipeline.py:3069:
+  pipeline\ai_pipeline.py:3070:                safe_write_file(
+  pipeline\ai_pipeline.py:3071:                    SAFE_ROOT,
+> pipeline\ai_pipeline.py:3072:                    repair_target,
+  pipeline\ai_pipeline.py:3073:                    regenerated,
+  pipeline\ai_pipeline.py:3074:                )
+  pipeline\ai_pipeline.py:3075:
+  pipeline\ai_pipeline.py:3076:                print(
+  pipeline\ai_pipeline.py:3077:                    "Regenerated file written to SAFE_ROOT:",
+> pipeline\ai_pipeline.py:3078:                    repair_target,
+  pipeline\ai_pipeline.py:3079:                )
+  pipeline\ai_pipeline.py:3080:
+  pipeline\ai_pipeline.py:3081:                break
+  pipeline\ai_pipeline.py:3082:
+  pipeline\ai_pipeline.py:3083:            except Exception as e:
+  pipeline\ai_pipeline.py:3084:                print(
+> pipeline\ai_pipeline.py:3085:                    f"Auto-repair attempt {repair_attempt + 1} failed: {e}"
+  pipeline\ai_pipeline.py:3086:                )
+  pipeline\ai_pipeline.py:3087:
+> pipeline\ai_pipeline.py:3088:                if repair_attempt >= repair_attempts - 1:
+  pipeline\ai_pipeline.py:3089:                    raise RuntimeError(
+> pipeline\ai_pipeline.py:3090:                        f"Deploy auto repair failed while regenerating "
+> pipeline\ai_pipeline.py:3091:                        f"{repair_target}: {e}"
+  pipeline\ai_pipeline.py:3092:                    ) from e
+  pipeline\ai_pipeline.py:3093:
+  pipeline\ai_pipeline.py:3094:                regeneration_context["contract_feedback"] = str(e)
+  pipeline\ai_pipeline.py:3095:
+  pipeline\ai_pipeline.py:3096:                print(
+> pipeline\ai_pipeline.py:3097:                    "Retrying auto-repair with deterministic "
+  pipeline\ai_pipeline.py:3098:                    "contract feedback..."
+  pipeline\ai_pipeline.py:3099:                )
+  pipeline\ai_pipeline.py:3100:
+  pipeline\ai_pipeline.py:3101:        if regenerated is None:
+  pipeline\ai_pipeline.py:3102:            raise RuntimeError(
+> pipeline\ai_pipeline.py:3103:                f"Remote validation repair returned None: {repair_target}"
+  pipeline\ai_pipeline.py:3104:            )
+  pipeline\ai_pipeline.py:3105:
+  pipeline\ai_pipeline.py:3106:        # regenerate_file_with_context() の返却値は、
+  pipeline\ai_pipeline.py:3107:        # 「ファイル本文」または「JSON形式の再生成レスポンス」の可能性がある。
+  pipeline\ai_pipeline.py:3108:        # 必ずファイル本文へ正規化してから後処理する。
+  pipeline\ai_pipeline.py:3109:
+> pipeline\ai_pipeline.py:3110:# Repair v2 already returns the complete repaired file content.
+  pipeline\ai_pipeline.py:3111:# Do not interpret it as a generated-file JSON response.
+  pipeline\ai_pipeline.py:3112:
+  pipeline\ai_pipeline.py:3113:        safe_write_file(
+  pipeline\ai_pipeline.py:3114:            SAFE_ROOT,
+> pipeline\ai_pipeline.py:3115:            repair_target,
+  pipeline\ai_pipeline.py:3116:            regenerated,
+  pipeline\ai_pipeline.py:3117:        )
+  pipeline\ai_pipeline.py:3118:
+  pipeline\ai_pipeline.py:3119:        print(
+> pipeline\ai_pipeline.py:3120:            f"Regenerated file written to SAFE_ROOT: {repair_target}"
+  pipeline\ai_pipeline.py:3121:        )
+  pipeline\ai_pipeline.py:3122:
+> pipeline\ai_pipeline.py:3123:        print("===== SCP REPAIRED FILES TO ANSIBLE CONTROL NODE =====")
+  pipeline\ai_pipeline.py:3124:        run_command([
+  pipeline\ai_pipeline.py:3125:            "scp",
+  pipeline\ai_pipeline.py:3126:            "-r",
+  pipeline\ai_pipeline.py:3127:            str(SAFE_ROOT),
+  pipeline\ai_pipeline.py:3128:            f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
+  pipeline\ai_pipeline.py:3129:        ])
+  pipeline\ai_pipeline.py:3130:
+> pipeline\ai_pipeline.py:3131:        print("===== REMOTE PLAYBOOK CHECK AFTER REPAIR =====")
+> pipeline\ai_pipeline.py:3132:        repaired_remote_playbook = run_remote_command(
+  pipeline\ai_pipeline.py:3133:            ANSIBLE_CONTROL_NODE,
+  pipeline\ai_pipeline.py:3134:            "cat /home/vboxuser/ai_driven/generated/files/ansible/playbook.yml",
+  pipeline\ai_pipeline.py:3135:        )
+  pipeline\ai_pipeline.py:3136:
+> pipeline\ai_pipeline.py:3137:        if isinstance(repaired_remote_playbook, dict):
+  pipeline\ai_pipeline.py:3138:            print(
+> pipeline\ai_pipeline.py:3139:                repaired_remote_playbook.get("stdout", "")
+  pipeline\ai_pipeline.py:3140:            )
+  pipeline\ai_pipeline.py:3141:        else:
+> pipeline\ai_pipeline.py:3142:            print(repaired_remote_playbook)
+  pipeline\ai_pipeline.py:3143:
+> pipeline\ai_pipeline.py:3144:        print("===== REMOTE VALIDATION AFTER REPAIR =====")
+  pipeline\ai_pipeline.py:3145:        remote_errors, stdout, stderr = run_remote_validation()
+  pipeline\ai_pipeline.py:3146:
+  pipeline\ai_pipeline.py:3147:        if remote_errors:
+> pipeline\ai_pipeline.py:3148:            print("Remote validation failed after repair")
+  pipeline\ai_pipeline.py:3149:            for e in remote_errors:
+  pipeline\ai_pipeline.py:3150:                print(e)
+  pipeline\ai_pipeline.py:3151:            raise RuntimeError(
+> pipeline\ai_pipeline.py:3152:                "Remote validation failed after repair"
+  pipeline\ai_pipeline.py:3153:            )
+  pipeline\ai_pipeline.py:3154:
+  pipeline\ai_pipeline.py:3155:        if remote_errors:
+> pipeline\ai_pipeline.py:3156:            print("Remote validation failed after repair")
+  pipeline\ai_pipeline.py:3157:            for e in remote_errors:
+  pipeline\ai_pipeline.py:3158:                print(e)
+> pipeline\ai_pipeline.py:3159:            raise RuntimeError("Remote validation failed after repair")
+  pipeline\ai_pipeline.py:3160:
+  pipeline\ai_pipeline.py:3161:    
+  pipeline\ai_pipeline.py:3162:    deploy_success = False
+  pipeline\ai_pipeline.py:3163:
+  pipeline\ai_pipeline.py:3164:    if validation_success:
+  pipeline\ai_pipeline.py:3170:        )
+  pipeline\ai_pipeline.py:3171:
+  pipeline\ai_pipeline.py:3172:        # Deployment succeeded at the command level.
+> pipeline\ai_pipeline.py:3173:        # Confirm the actual Pod state before browser/PHP validation.
+  pipeline\ai_pipeline.py:3174:        pod_state = check_pod_state()
+  pipeline\ai_pipeline.py:3175:        deploy_evidence["pod_state"] = pod_state
+  pipeline\ai_pipeline.py:3176:
+  pipeline\ai_pipeline.py:3177:        if not pod_state["pod_running"]:
+  pipeline\ai_pipeline.py:3178:            print("Pod is not running after deploy")
+  pipeline\ai_pipeline.py:3184:                "root_cause": "pod_not_running",
+  pipeline\ai_pipeline.py:3185:                "reason": "lamp-pod exists but is not running after deployment.",
+  pipeline\ai_pipeline.py:3186:                "confidence": 0.99,
+> pipeline\ai_pipeline.py:3187:                "repair_hint": (
+  pipeline\ai_pipeline.py:3188:                    "Ensure the deployment starts the existing Pod and its containe
+rs."
+  pipeline\ai_pipeline.py:3189:                ),
+> pipeline\ai_pipeline.py:3190:                "repair_target": "ansible/playbook.yml",
+  pipeline\ai_pipeline.py:3191:            }
+  pipeline\ai_pipeline.py:3192:    else:
+  pipeline\ai_pipeline.py:3193:        print("\nValidation failed - skip deployment")
+  pipeline\ai_pipeline.py:3194:
+  pipeline\ai_pipeline.py:3195:    if not deploy_success:
+> pipeline\ai_pipeline.py:3196:        print("\n===== DEPLOY FAILED - SKIP BROWSER/PHP VALIDATION =====")
+  pipeline\ai_pipeline.py:3197:    else:
+> pipeline\ai_pipeline.py:3198:        for repair_attempt in range(2):
+> pipeline\ai_pipeline.py:3199:            print(f"\n===== BROWSER VALIDATION (attempt {repair_attempt + 1}) =====
+")
+> pipeline\ai_pipeline.py:3200:            browser_result = run_browser_validation()
+> pipeline\ai_pipeline.py:3201:            browser_issues = analyze_browser_validation(browser_result)
+> pipeline\ai_pipeline.py:3202:            print(json.dumps(browser_result, indent=2, ensure_ascii=False))
+> pipeline\ai_pipeline.py:3203:            print("Browser issues:", json.dumps(browser_issues, ensure_ascii=False)
+)
+  pipeline\ai_pipeline.py:3204:
+  pipeline\ai_pipeline.py:3205:            print("\n===== PHP LINT =====")
+  pipeline\ai_pipeline.py:3206:            lint_result = run_php_lint()
+  pipeline\ai_pipeline.py:3207:            lint_issues = analyze_php_lint_result(lint_result)
+  pipeline\ai_pipeline.py:3208:            print(json.dumps(lint_result, indent=2, ensure_ascii=False))
+  pipeline\ai_pipeline.py:3209:            print("PHP lint issues:", json.dumps(lint_issues, ensure_ascii=False))
+  pipeline\ai_pipeline.py:3210:
+  pipeline\ai_pipeline.py:3211:            diagnosis = review_data.get("diagnosis", {})
+> pipeline\ai_pipeline.py:3212:            repair_target = plan_repair(
+  pipeline\ai_pipeline.py:3213:                diagnosis,
+> pipeline\ai_pipeline.py:3214:                browser_result,
+> pipeline\ai_pipeline.py:3215:                browser_issues,
+  pipeline\ai_pipeline.py:3216:                lint_result,
+  pipeline\ai_pipeline.py:3217:                lint_issues,
+  pipeline\ai_pipeline.py:3218:                deploy_result,
+  pipeline\ai_pipeline.py:3219:                deploy_diagnosis,
+  pipeline\ai_pipeline.py:3220:            )
+  pipeline\ai_pipeline.py:3221:
+> pipeline\ai_pipeline.py:3222:            if not browser_issues and not lint_issues:
+  pipeline\ai_pipeline.py:3223:                validation_success = deploy_success
+  pipeline\ai_pipeline.py:3224:                break
+  pipeline\ai_pipeline.py:3225:
+  pipeline\ai_pipeline.py:3226:            validation_success = False
+  pipeline\ai_pipeline.py:3227:
+  pipeline\ai_pipeline.py:3228:            error_list = [
+  pipeline\ai_pipeline.py:3229:                {
+  pipeline\ai_pipeline.py:3230:                    "type": issue.get("type", "validation_error"),
+> pipeline\ai_pipeline.py:3231:                    "file": repair_target,
+  pipeline\ai_pipeline.py:3232:                    "stderr": issue.get("detail", ""),
+  pipeline\ai_pipeline.py:3233:                }
+> pipeline\ai_pipeline.py:3234:                for issue in browser_issues + lint_issues
+  pipeline\ai_pipeline.py:3235:            ]
+  pipeline\ai_pipeline.py:3236:
+> pipeline\ai_pipeline.py:3237:            repair_validation_errors(
+  pipeline\ai_pipeline.py:3238:                error_list,
+> pipeline\ai_pipeline.py:3239:                browser_result.get("stdout", "") + "\n" + lint_result.get("stdout",
+ ""),
+> pipeline\ai_pipeline.py:3240:                browser_result.get("stderr", "") + "\n" + lint_result.get("stderr",
+ ""),
+  pipeline\ai_pipeline.py:3241:                context["architecture"],
+  pipeline\ai_pipeline.py:3242:                context["rules"],
+  pipeline\ai_pipeline.py:3243:                context["task_rules"],
+  pipeline\ai_pipeline.py:3244:                context["format_rules"],
+  pipeline\ai_pipeline.py:3245:                SAFE_ROOT,
+> pipeline\ai_pipeline.py:3246:                target_file_override=repair_target,
+  pipeline\ai_pipeline.py:3247:                deploy_evidence=deploy_evidence,
+  pipeline\ai_pipeline.py:3248:                deploy_diagnosis=deploy_diagnosis,
+  pipeline\ai_pipeline.py:3249:                deployment_contract=context.get("deployment_contract", {}),
+  pipeline\ai_pipeline.py:3250:            )
+  pipeline\ai_pipeline.py:3251:
+> pipeline\ai_pipeline.py:3252:            print("\n===== SCP TO ANSIBLE CONTROL NODE (after repair) =====")
+  pipeline\ai_pipeline.py:3253:            run_command([
+  pipeline\ai_pipeline.py:3254:                "scp",
+  pipeline\ai_pipeline.py:3255:                "-r",
+  pipeline\ai_pipeline.py:3256:                str(SAFE_ROOT),
+  pipeline\ai_pipeline.py:3257:                f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
+  pipeline\ai_pipeline.py:3258:            ])
+  pipeline\ai_pipeline.py:3259:
+> pipeline\ai_pipeline.py:3260:            print("\n===== REDEPLOY AFTER REPAIR =====")
+  pipeline\ai_pipeline.py:3261:            (
+  pipeline\ai_pipeline.py:3262:                deploy_result,
+  pipeline\ai_pipeline.py:3263:                deploy_evidence,
+  pipeline\ai_pipeline.py:3264:                deploy_diagnosis,
+  pipeline\ai_pipeline.py:3265:                deploy_success,
+  pipeline\ai_pipeline.py:3284:                    "root_cause": "pod_not_running",
+  pipeline\ai_pipeline.py:3285:                    "reason": "lamp-pod exists but is not running after redeploymen
+t.",
+  pipeline\ai_pipeline.py:3286:                    "confidence": 0.99,
+> pipeline\ai_pipeline.py:3287:                    "repair_hint": (
+  pipeline\ai_pipeline.py:3288:                        "Ensure the deployment starts the existing Pod and its cont
+ainers."
+  pipeline\ai_pipeline.py:3289:                    ),
+> pipeline\ai_pipeline.py:3290:                    "repair_target": "ansible/playbook.yml",
+  pipeline\ai_pipeline.py:3291:                }
+  pipeline\ai_pipeline.py:3292:
+  pipeline\ai_pipeline.py:3293:                break
+  pipeline\ai_pipeline.py:3294:
+  pipeline\ai_pipeline.py:3295:    if not validation_success and deploy_success:
+> pipeline\ai_pipeline.py:3296:        combined_issues = browser_issues + lint_issues
+  pipeline\ai_pipeline.py:3297:        primary_issue = combined_issues[0] if combined_issues else {}
+> pipeline\ai_pipeline.py:3298:        target = primary_issue.get("repair_target", "src/index.php")
+  pipeline\ai_pipeline.py:3299:        deploy_diagnosis = {
+  pipeline\ai_pipeline.py:3300:            "category": primary_issue.get("category", "application"),
+> pipeline\ai_pipeline.py:3301:            "root_cause": primary_issue.get("type", "browser_validation_failed"),
+> pipeline\ai_pipeline.py:3302:            "reason": primary_issue.get("detail", "Browser validation or PHP lint f
+ailed."),
+  pipeline\ai_pipeline.py:3303:            "confidence": 0.9,
+> pipeline\ai_pipeline.py:3304:            "repair_hint": f"Fix {target}.",
+> pipeline\ai_pipeline.py:3305:            "repair_target": target,
+  pipeline\ai_pipeline.py:3306:        }
+  pipeline\ai_pipeline.py:3307:
+  pipeline\ai_pipeline.py:3308:    print("validation_success =", validation_success)
+  pipeline\ai_pipeline.py:3309:    print("deploy_success =", deploy_success)
+  pipeline\ai_pipeline.py:3310:    print(json.dumps(deploy_diagnosis, indent=2))
+  pipeline\ai_pipeline.py:3329:            ensure_ascii=False
+  pipeline\ai_pipeline.py:3330:        ))
+  pipeline\ai_pipeline.py:3331:
+> pipeline\ai_pipeline.py:3332:        repair_target: Optional[str] = None
+  pipeline\ai_pipeline.py:3333:
+  pipeline\ai_pipeline.py:3334:        if isinstance(deploy_diagnosis, dict):
+> pipeline\ai_pipeline.py:3335:            candidate = deploy_diagnosis.get("repair_target")
+  pipeline\ai_pipeline.py:3336:            if isinstance(candidate, str) and candidate:
+> pipeline\ai_pipeline.py:3337:                repair_target = candidate
+  pipeline\ai_pipeline.py:3338:
+> pipeline\ai_pipeline.py:3339:        if repair_target:
+> pipeline\ai_pipeline.py:3340:            print(f"\n===== DEPLOY AUTO REPAIR ({repair_target}) =====")
+  pipeline\ai_pipeline.py:3341:            # If the error is privileged port binding, apply quick port fix.
+  pipeline\ai_pipeline.py:3342:            error_text = (
+  pipeline\ai_pipeline.py:3343:                deploy_result.get("stdout", "")
+  pipeline\ai_pipeline.py:3344:                + "\n"
+  pipeline\ai_pipeline.py:3345:                + deploy_result.get("stderr", "")
+  pipeline\ai_pipeline.py:3346:            )
+  pipeline\ai_pipeline.py:3347:
+  pipeline\ai_pipeline.py:3348:            if "rootlessport cannot expose privileged port 80" in error_text:
+> pipeline\ai_pipeline.py:3349:                print("===== REPAIR PUBLISH PORT =====")
+> pipeline\ai_pipeline.py:3350:                repair_publish_port(SAFE_ROOT / "ansible/playbook.yml")
+  pipeline\ai_pipeline.py:3351:
+  pipeline\ai_pipeline.py:3352:            else:
+  pipeline\ai_pipeline.py:3353:                # Deploy failure:
+> pipeline\ai_pipeline.py:3354:                # First apply deterministic contract repair.
+> pipeline\ai_pipeline.py:3355:                # Only fall back to AI repair when no deterministic repair applies.
+  pipeline\ai_pipeline.py:3356:                try:
+> pipeline\ai_pipeline.py:3357:                    target_path = SAFE_ROOT / repair_target
+  pipeline\ai_pipeline.py:3358:
+  pipeline\ai_pipeline.py:3359:                    if not target_path.exists():
+  pipeline\ai_pipeline.py:3360:                        raise RuntimeError(
+> pipeline\ai_pipeline.py:3361:                            f"Repair target does not exist: {repair_target}"
+  pipeline\ai_pipeline.py:3362:                        )
+  pipeline\ai_pipeline.py:3363:
+  pipeline\ai_pipeline.py:3364:                    current_content = target_path.read_text(
+  pipeline\ai_pipeline.py:3365:                        encoding="utf-8"
+  pipeline\ai_pipeline.py:3366:                    )
+  pipeline\ai_pipeline.py:3368:                    deterministic_content = current_content
+  pipeline\ai_pipeline.py:3369:
+  pipeline\ai_pipeline.py:3370:                    # ====================================================
+> pipeline\ai_pipeline.py:3371:                    # Deterministic Contract Repair
+  pipeline\ai_pipeline.py:3372:                    # ====================================================
+  pipeline\ai_pipeline.py:3373:                    #
+  pipeline\ai_pipeline.py:3374:                    # Known infrastructure contract violation:
+  pipeline\ai_pipeline.py:3375:                    # container/pod_name -> name
+  pipeline\ai_pipeline.py:3376:                    #
+  pipeline\ai_pipeline.py:3378:                    # All other valid configuration is preserved.
+  pipeline\ai_pipeline.py:3379:                    # ====================================================
+  pipeline\ai_pipeline.py:3380:
+> pipeline\ai_pipeline.py:3381:                    if repair_target == "ansible/playbook.yml":
+  pipeline\ai_pipeline.py:3382:                        deterministic_content = deterministic_content.replace(
+  pipeline\ai_pipeline.py:3383:                            "container/pod_name: lamp-pod",
+  pipeline\ai_pipeline.py:3384:                            "name: lamp-pod",
+  pipeline\ai_pipeline.py:3385:                        )
+  pipeline\ai_pipeline.py:3386:
+  pipeline\ai_pipeline.py:3390:                        )
+  pipeline\ai_pipeline.py:3391:
+  pipeline\ai_pipeline.py:3392:                    if deterministic_content != current_content:
+> pipeline\ai_pipeline.py:3393:                        print("===== DETERMINISTIC DEPLOY REPAIR =====")
+> pipeline\ai_pipeline.py:3394:                        print(f"Target: {repair_target}")
+  pipeline\ai_pipeline.py:3395:
+  pipeline\ai_pipeline.py:3396:                        if "container/pod_name: lamp-pod" in current_content:
+  pipeline\ai_pipeline.py:3397:                            print(
+  pipeline\ai_pipeline.py:3398:                                "Replace: container/pod_name: lamp-pod"
+  pipeline\ai_pipeline.py:3399:                            )
+  pipeline\ai_pipeline.py:3407:
+  pipeline\ai_pipeline.py:3408:                        safe_write_file(
+  pipeline\ai_pipeline.py:3409:                            SAFE_ROOT,
+> pipeline\ai_pipeline.py:3410:                            repair_target,
+  pipeline\ai_pipeline.py:3411:                            deterministic_content,
+  pipeline\ai_pipeline.py:3412:                        )
+  pipeline\ai_pipeline.py:3413:
+  pipeline\ai_pipeline.py:3414:                        print(
+> pipeline\ai_pipeline.py:3415:                            "===== FILE AFTER DETERMINISTIC DEPLOY REPAIR ====="
+  pipeline\ai_pipeline.py:3416:                        )
+  pipeline\ai_pipeline.py:3417:                        print(
+  pipeline\ai_pipeline.py:3418:                            deterministic_content[:600]
+  pipeline\ai_pipeline.py:3419:                        )
+  pipeline\ai_pipeline.py:3420:
+  pipeline\ai_pipeline.py:3421:                        print(
+> pipeline\ai_pipeline.py:3422:                            "Deterministic deploy repair completed."
+  pipeline\ai_pipeline.py:3423:                        )
+  pipeline\ai_pipeline.py:3424:
+  pipeline\ai_pipeline.py:3425:                    else:
+  pipeline\ai_pipeline.py:3426:                        # ====================================================
+> pipeline\ai_pipeline.py:3427:                        # AI Repair fallback
+  pipeline\ai_pipeline.py:3428:                        # ====================================================
+  pipeline\ai_pipeline.py:3429:
+  pipeline\ai_pipeline.py:3430:                        print(
+> pipeline\ai_pipeline.py:3431:                            f"===== REGENERATE {repair_target} USING AI ====="
+  pipeline\ai_pipeline.py:3432:                        )
+  pipeline\ai_pipeline.py:3433:
+  pipeline\ai_pipeline.py:3434:                        regeneration_context = {
+  pipeline\ai_pipeline.py:3435:                            "source": "deploy",
+  pipeline\ai_pipeline.py:3436:                            "errors": [deploy_diagnosis],
+  pipeline\ai_pipeline.py:3444:                        }
+  pipeline\ai_pipeline.py:3445:
+  pipeline\ai_pipeline.py:3446:                        regenerated = regenerate_file_with_context(
+> pipeline\ai_pipeline.py:3447:                            repair_target,
+  pipeline\ai_pipeline.py:3448:                            context["architecture"],
+  pipeline\ai_pipeline.py:3449:                            regeneration_context,
+  pipeline\ai_pipeline.py:3450:                            context["rules"],
+  pipeline\ai_pipeline.py:3451:                            context["task_rules"],
+  pipeline\ai_pipeline.py:3452:                            context["format_rules"],
+  pipeline\ai_pipeline.py:3454:
+  pipeline\ai_pipeline.py:3455:                        if regenerated is None:
+  pipeline\ai_pipeline.py:3456:                            raise RuntimeError(
+> pipeline\ai_pipeline.py:3457:                                f"Regeneration returned None: {repair_target}"
+  pipeline\ai_pipeline.py:3458:                            )
+  pipeline\ai_pipeline.py:3459:
+  pipeline\ai_pipeline.py:3460:                        # =========================================================
+===
+> pipeline\ai_pipeline.py:3461:                        # Validate AI Repair result before writing/deploying
+  pipeline\ai_pipeline.py:3462:                        # =========================================================
+===
+  pipeline\ai_pipeline.py:3463:
+> pipeline\ai_pipeline.py:3464:                        if repair_target == "ansible/playbook.yml":
+  pipeline\ai_pipeline.py:3465:                            try:
+  pipeline\ai_pipeline.py:3466:                                parsed_yaml = yaml.safe_load(regenerated)
+  pipeline\ai_pipeline.py:3467:
+  pipeline\ai_pipeline.py:3468:                                contract_errors = validate_infrastructure_playbook_
+contract(
+  pipeline\ai_pipeline.py:3469:                                    parsed_yaml
+  pipeline\ai_pipeline.py:3471:
+  pipeline\ai_pipeline.py:3472:                            except Exception as e:
+  pipeline\ai_pipeline.py:3473:                                contract_errors = [
+> pipeline\ai_pipeline.py:3474:                                    f"Invalid YAML generated by Repair AI: {e}"
+  pipeline\ai_pipeline.py:3475:                                ]
+  pipeline\ai_pipeline.py:3476:
+  pipeline\ai_pipeline.py:3477:                            if contract_errors:
+> pipeline\ai_pipeline.py:3478:                                print("===== AI REPAIR CONTRACT VIOLATION =====")
+  pipeline\ai_pipeline.py:3479:                                for error in contract_errors:
+  pipeline\ai_pipeline.py:3480:                                    print(f"- {error}")
+  pipeline\ai_pipeline.py:3481:
+  pipeline\ai_pipeline.py:3482:                                # AIが壊した既知のContractを決定的に修正
+> pipeline\ai_pipeline.py:3483:                                deterministic_repaired = regenerated
+  pipeline\ai_pipeline.py:3484:
+> pipeline\ai_pipeline.py:3485:                                deterministic_repaired = deterministic_repaired.rep
+lace(
+  pipeline\ai_pipeline.py:3486:                                    "container/pod_name: lamp-pod",
+  pipeline\ai_pipeline.py:3487:                                    "name: lamp-pod",
+  pipeline\ai_pipeline.py:3488:                                )
+  pipeline\ai_pipeline.py:3489:
+> pipeline\ai_pipeline.py:3490:                                # deterministic_repaired = deterministic_repaired.r
+eplace(
+  pipeline\ai_pipeline.py:3491:                                #     "/home/vboxuser/containers/html:/var/www/html
+",
+  pipeline\ai_pipeline.py:3492:                                #     "/home/vboxuser/containers/html:/var/www/html
+:Z",
+  pipeline\ai_pipeline.py:3493:                                # )
+  pipeline\ai_pipeline.py:3494:
+> pipeline\ai_pipeline.py:3495:                                deterministic_repaired = deterministic_repaired.rep
+lace(
+  pipeline\ai_pipeline.py:3496:                                    "publish_port_map:",
+  pipeline\ai_pipeline.py:3497:                                    "publish:",
+  pipeline\ai_pipeline.py:3498:                                )
+  pipeline\ai_pipeline.py:3499:
+> pipeline\ai_pipeline.py:3500:                                if deterministic_repaired != regenerated:
+> pipeline\ai_pipeline.py:3501:                                    print("===== DETERMINISTIC POST-REPAIR FIX ====
+=")
+  pipeline\ai_pipeline.py:3502:
+  pipeline\ai_pipeline.py:3503:                                    if "publish_port_map:" in regenerated:
+  pipeline\ai_pipeline.py:3504:                                        print(
+  pipeline\ai_pipeline.py:3505:                                            "Replace: publish_port_map:"
+  pipeline\ai_pipeline.py:3506:                                        )
+  pipeline\ai_pipeline.py:3516:                                            "With:    name: lamp-pod"
+  pipeline\ai_pipeline.py:3517:                                        )
+  pipeline\ai_pipeline.py:3518:
+> pipeline\ai_pipeline.py:3519:                                    regenerated = deterministic_repaired
+  pipeline\ai_pipeline.py:3520:
+  pipeline\ai_pipeline.py:3521:                                    # 修正後にもう一度Contract Validator
+  pipeline\ai_pipeline.py:3522:                                    try:
+  pipeline\ai_pipeline.py:3523:                                        parsed_yaml = yaml.safe_load(regenerated)
+  pipeline\ai_pipeline.py:3524:                                        contract_errors = (
+  pipeline\ai_pipeline.py:3528:                                        )
+  pipeline\ai_pipeline.py:3529:                                    except Exception as e:
+  pipeline\ai_pipeline.py:3530:                                        contract_errors = [
+> pipeline\ai_pipeline.py:3531:                                            f"Invalid YAML after deterministic repa
+ir: {e}"
+  pipeline\ai_pipeline.py:3532:                                        ]
+  pipeline\ai_pipeline.py:3533:
+  pipeline\ai_pipeline.py:3534:                                if contract_errors:
+> pipeline\ai_pipeline.py:3535:                                    print("===== REPAIR CONTRACT STILL INVALID ====
+=")
+  pipeline\ai_pipeline.py:3536:                                    for error in contract_errors:
+  pipeline\ai_pipeline.py:3537:                                        print(f"- {error}")
+  pipeline\ai_pipeline.py:3538:
+  pipeline\ai_pipeline.py:3539:                                    raise RuntimeError(
+> pipeline\ai_pipeline.py:3540:                                        "AI Repair produced an invalid infrastructu
+re "
+  pipeline\ai_pipeline.py:3541:                                        "playbook contract."
+  pipeline\ai_pipeline.py:3542:                                    )
+  pipeline\ai_pipeline.py:3543:
+> pipeline\ai_pipeline.py:3544:                                print("AI Repair result passed after deterministic 
+repair.")
+  pipeline\ai_pipeline.py:3545:                                
+  pipeline\ai_pipeline.py:3546:                        safe_write_file(
+  pipeline\ai_pipeline.py:3547:                            SAFE_ROOT,
+> pipeline\ai_pipeline.py:3548:                            repair_target,
+  pipeline\ai_pipeline.py:3549:                            regenerated,
+  pipeline\ai_pipeline.py:3550:                        )
+  pipeline\ai_pipeline.py:3551:
+  pipeline\ai_pipeline.py:3552:                        print(
+  pipeline\ai_pipeline.py:3553:                            f"Regenerated file written to SAFE_ROOT: "
+> pipeline\ai_pipeline.py:3554:                            f"{repair_target}"
+  pipeline\ai_pipeline.py:3555:                        )
+  pipeline\ai_pipeline.py:3556:
+  pipeline\ai_pipeline.py:3557:                except Exception as e:
+> pipeline\ai_pipeline.py:3558:                    print("Auto-repair regeneration failed:", e)
+  pipeline\ai_pipeline.py:3559:                    raise RuntimeError(
+  pipeline\ai_pipeline.py:3560:                        f"Unknown deploy error.\n"
+  pipeline\ai_pipeline.py:3561:                        f"{deploy_result['stderr']}"
+  pipeline\ai_pipeline.py:3562:                    )
+  pipeline\ai_pipeline.py:3563:
+  pipeline\ai_pipeline.py:3582:                "podman pod rm -f lamp-pod || true"
+  pipeline\ai_pipeline.py:3583:            )
+  pipeline\ai_pipeline.py:3584:
+> pipeline\ai_pipeline.py:3585:            print("\n===== REDEPLOY AFTER DEPLOY REPAIR =====")
+  pipeline\ai_pipeline.py:3586:
+  pipeline\ai_pipeline.py:3587:            deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = perf
+orm_deploy_cycle()
+  pipeline\ai_pipeline.py:3588:
+  pipeline\ai_pipeline.py:3589:            print("===== PODMAN STATUS AFTER DEPLOY =====")
+  pipeline\ai_pipeline.py:3590:
+  pipeline\ai_pipeline.py:3630:                return True
+  pipeline\ai_pipeline.py:3631:
+  pipeline\ai_pipeline.py:3632:        # # Certain diagnosed root causes should trigger an automatic
+> pipeline\ai_pipeline.py:3633:        # # repair attempt instead of immediately raising an exception.
+  pipeline\ai_pipeline.py:3634:        # root = deploy_diagnosis.get("root_cause")
+> pipeline\ai_pipeline.py:3635:        # auto_repair_root_causes = {
+> pipeline\ai_pipeline.py:3636:        #     "browser_connection_error",
+> pipeline\ai_pipeline.py:3637:        #     "browser_status",
+  pipeline\ai_pipeline.py:3638:        #     "pod_not_running",
+  pipeline\ai_pipeline.py:3639:        #     "apache_not_running",
+  pipeline\ai_pipeline.py:3640:        #     "container_not_running",
+  pipeline\ai_pipeline.py:3641:        #     "playbook_error",
+  pipeline\ai_pipeline.py:3642:        #     "ansible_module_error",
+  pipeline\ai_pipeline.py:3643:        # }
+  pipeline\ai_pipeline.py:3644:
+> pipeline\ai_pipeline.py:3645:        # if root in auto_repair_root_causes:
+> pipeline\ai_pipeline.py:3646:        #     print(f"\n===== AUTO-REPAIR TRIGGERED FOR: {root} =====")
+  pipeline\ai_pipeline.py:3647:
+> pipeline\ai_pipeline.py:3648:        #     # Perform AI-driven repair of the diagnosed target (e.g. playbook)
+> pipeline\ai_pipeline.py:3649:        #     file_to_repair = (
+> pipeline\ai_pipeline.py:3650:        #         deploy_diagnosis.get("repair_target")
+  pipeline\ai_pipeline.py:3651:        #         or "ansible/playbook.yml"
+  pipeline\ai_pipeline.py:3652:        #     )
+  pipeline\ai_pipeline.py:3653:
+  pipeline\ai_pipeline.py:3654:        #     regeneration_context = {
+  pipeline\ai_pipeline.py:3655:        #         "source": "deploy",
+  pipeline\ai_pipeline.py:3660:        #         "diagnosis": deploy_diagnosis,
+  pipeline\ai_pipeline.py:3661:        #     }
+  pipeline\ai_pipeline.py:3662:
+> pipeline\ai_pipeline.py:3663:        #     repair_attempts = 2
+  pipeline\ai_pipeline.py:3664:        #     regenerated = None
+  pipeline\ai_pipeline.py:3665:
+> pipeline\ai_pipeline.py:3666:        #     for repair_attempt in range(repair_attempts):
+  pipeline\ai_pipeline.py:3667:        #         try:
+  pipeline\ai_pipeline.py:3668:        #             print(
+> pipeline\ai_pipeline.py:3669:        #                 f"\n===== REGENERATE {file_to_repair} "
+> pipeline\ai_pipeline.py:3670:        #                 f"USING AI (auto-repair {repair_attempt + 1}/{repair_atte
+mpts}) ====="
+  pipeline\ai_pipeline.py:3671:        #             )
+  pipeline\ai_pipeline.py:3672:
+  pipeline\ai_pipeline.py:3673:        #             regenerated = regenerate_file_with_context(
+> pipeline\ai_pipeline.py:3674:        #                 file_to_repair,
+  pipeline\ai_pipeline.py:3675:        #                 context["architecture"],
+  pipeline\ai_pipeline.py:3676:        #                 regeneration_context,
+  pipeline\ai_pipeline.py:3677:        #                 context["rules"],
+  pipeline\ai_pipeline.py:3678:        #                 context["task_rules"],
+  pipeline\ai_pipeline.py:3679:        #                 context["format_rules"],
+  pipeline\ai_pipeline.py:3681:
+  pipeline\ai_pipeline.py:3682:        #             if regenerated is None:
+  pipeline\ai_pipeline.py:3683:        #                 raise RuntimeError(
+> pipeline\ai_pipeline.py:3684:        #                     f"Regeneration returned None: {file_to_repair}"
+  pipeline\ai_pipeline.py:3685:        #                 )
+  pipeline\ai_pipeline.py:3686:
+  pipeline\ai_pipeline.py:3687:        #             safe_write_file(
+  pipeline\ai_pipeline.py:3688:        #                 SAFE_ROOT,
+> pipeline\ai_pipeline.py:3689:        #                 file_to_repair,
+  pipeline\ai_pipeline.py:3690:        #                 regenerated,
+  pipeline\ai_pipeline.py:3691:        #             )
+  pipeline\ai_pipeline.py:3692:
+  pipeline\ai_pipeline.py:3693:        #             print(
+  pipeline\ai_pipeline.py:3694:        #                 "Regenerated file written to SAFE_ROOT:",
+> pipeline\ai_pipeline.py:3695:        #                 file_to_repair,
+  pipeline\ai_pipeline.py:3696:        #             )
+  pipeline\ai_pipeline.py:3697:
+  pipeline\ai_pipeline.py:3698:        #             break
+  pipeline\ai_pipeline.py:3699:
+  pipeline\ai_pipeline.py:3700:        #         except Exception as e:
+  pipeline\ai_pipeline.py:3701:        #             print(
+> pipeline\ai_pipeline.py:3702:        #                 f"Auto-repair attempt {repair_attempt + 1} failed: {e}"
+  pipeline\ai_pipeline.py:3703:        #             )
+  pipeline\ai_pipeline.py:3704:
+> pipeline\ai_pipeline.py:3705:        #             if repair_attempt >= repair_attempts - 1:
+  pipeline\ai_pipeline.py:3706:        #                 raise RuntimeError(
+> pipeline\ai_pipeline.py:3707:        #                     f"Deploy auto repair failed while regenerating "
+> pipeline\ai_pipeline.py:3708:        #                     f"{file_to_repair}: {e}"
+  pipeline\ai_pipeline.py:3709:        #                 ) from e
+  pipeline\ai_pipeline.py:3710:
+  pipeline\ai_pipeline.py:3711:        #             print(
+> pipeline\ai_pipeline.py:3712:        #                 "Retrying auto-repair with deterministic "
+  pipeline\ai_pipeline.py:3713:        #                 "contract feedback..."
+  pipeline\ai_pipeline.py:3714:        #             )
+  pipeline\ai_pipeline.py:3715:
+  pipeline\ai_pipeline.py:3716:
+> pipeline\ai_pipeline.py:3717:        #     # Transfer repaired files to control node and redeploy
+> pipeline\ai_pipeline.py:3718:        #     print("\n===== SCP TO ANSIBLE CONTROL NODE (auto-repair) =====")
+  pipeline\ai_pipeline.py:3719:        #     run_command([
+  pipeline\ai_pipeline.py:3720:        #         "scp",
+  pipeline\ai_pipeline.py:3721:        #         "-r",
+  pipeline\ai_pipeline.py:3722:        #         str(SAFE_ROOT),
+  pipeline\ai_pipeline.py:3723:        #         f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
+  pipeline\ai_pipeline.py:3724:        #     ])
+  pipeline\ai_pipeline.py:3725:
+> pipeline\ai_pipeline.py:3726:        #     print("===== REMOTE PLAYBOOK CHECK (auto-repair) =====")
+  pipeline\ai_pipeline.py:3727:        #     print(run_remote_command(
+  pipeline\ai_pipeline.py:3728:        #         ANSIBLE_CONTROL_NODE,
+  pipeline\ai_pipeline.py:3729:        #         "cat /home/vboxuser/ai_driven/generated/files/ansible/playbook.ym
+l"
+  pipeline\ai_pipeline.py:3730:        #     ))
+  pipeline\ai_pipeline.py:3731:
+> pipeline\ai_pipeline.py:3732:        #     print("\n===== REMOVE OLD POD (auto-repair) =====")
+  pipeline\ai_pipeline.py:3733:        #     run_remote_command(
+  pipeline\ai_pipeline.py:3734:        #         EXECUTION_NODE,
+  pipeline\ai_pipeline.py:3735:        #         "podman pod rm -f lamp-pod || true"
+  pipeline\ai_pipeline.py:3736:        #     )
+  pipeline\ai_pipeline.py:3737:
+> pipeline\ai_pipeline.py:3738:        #     print("\n===== REDEPLOY AFTER AUTO-REPAIR =====")
+  pipeline\ai_pipeline.py:3739:        #     deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = (
+  pipeline\ai_pipeline.py:3740:        #         perform_deploy_cycle()
+  pipeline\ai_pipeline.py:3741:        #     )
+  pipeline\ai_pipeline.py:3742:
+> pipeline\ai_pipeline.py:3743:        #     print("===== PODMAN STATUS AFTER DEPLOY REPAIR =====")
+  pipeline\ai_pipeline.py:3744:        #     print(run_remote_command(
+  pipeline\ai_pipeline.py:3745:        #         EXECUTION_NODE,
+  pipeline\ai_pipeline.py:3746:        #         "podman ps -a"
+  pipeline\ai_pipeline.py:3747:        #     ))
+  pipeline\ai_pipeline.py:3748:
+  pipeline\ai_pipeline.py:3749:        #     if not deploy_success:
+> pipeline\ai_pipeline.py:3750:        #         raise RuntimeError("Deploy failed after auto-repair.")
+  pipeline\ai_pipeline.py:3751:
+  pipeline\ai_pipeline.py:3752:        #     # ---------------------------------------------------------
+> pipeline\ai_pipeline.py:3753:        #     # Auto-repair後も、Web/PHPの実動作を再検証する。
+  pipeline\ai_pipeline.py:3754:        #     #
+  pipeline\ai_pipeline.py:3755:        #     # Ansibleのreturn code == 0だけでは、
+  pipeline\ai_pipeline.py:3756:        #     # Webアプリケーションが正常とは判断しない。
+  pipeline\ai_pipeline.py:3757:        #     # ---------------------------------------------------------
+> pipeline\ai_pipeline.py:3758:        #     print("\n===== POST-REPAIR BROWSER VALIDATION =====")
+> pipeline\ai_pipeline.py:3759:        #     browser_result = run_browser_validation()
+> pipeline\ai_pipeline.py:3760:        #     browser_issues = analyze_browser_validation(browser_result)
+  pipeline\ai_pipeline.py:3761:
+  pipeline\ai_pipeline.py:3762:        #     print(json.dumps(
+> pipeline\ai_pipeline.py:3763:        #         browser_result,
+  pipeline\ai_pipeline.py:3764:        #         indent=2,
+  pipeline\ai_pipeline.py:3765:        #         ensure_ascii=False,
+  pipeline\ai_pipeline.py:3766:        #     ))
+  pipeline\ai_pipeline.py:3767:
+  pipeline\ai_pipeline.py:3768:        #     print(
+> pipeline\ai_pipeline.py:3769:        #         "Browser issues:",
+> pipeline\ai_pipeline.py:3770:        #         json.dumps(browser_issues, ensure_ascii=False)
+  pipeline\ai_pipeline.py:3771:        #     )
+  pipeline\ai_pipeline.py:3772:
+> pipeline\ai_pipeline.py:3773:        #     print("\n===== POST-REPAIR PHP LINT =====")
+  pipeline\ai_pipeline.py:3774:        #     lint_result = run_php_lint()
+  pipeline\ai_pipeline.py:3775:        #     lint_issues = analyze_php_lint_result(lint_result)
+  pipeline\ai_pipeline.py:3776:
+  pipeline\ai_pipeline.py:3777:        #     print(json.dumps(
+  pipeline\ai_pipeline.py:3778:        #         lint_result,
+  pipeline\ai_pipeline.py:3788:        #     # ---------------------------------------------------------
+  pipeline\ai_pipeline.py:3789:        #     # Web/PHPともに正常なら初めて成功。
+  pipeline\ai_pipeline.py:3790:        #     # ---------------------------------------------------------
+> pipeline\ai_pipeline.py:3791:        #     if not browser_issues and not lint_issues:
+> pipeline\ai_pipeline.py:3792:        #         print("Pipeline completed successfully after auto-repair")
+  pipeline\ai_pipeline.py:3793:
+  pipeline\ai_pipeline.py:3794:        #         context["deployment_contract"].update({
+  pipeline\ai_pipeline.py:3795:        #             "web_url": "http://192.168.122.10:8080",
+  pipeline\ai_pipeline.py:3796:        #             "db_host": "mysql",
+  pipeline\ai_pipeline.py:3797:        #             "db_port": 3306,
+  pipeline\ai_pipeline.py:3806:        #     # Deploy自体は成功したが、実動作検証に失敗した。
+  pipeline\ai_pipeline.py:3807:        #     # ここで成功扱いしてはいけない。
+  pipeline\ai_pipeline.py:3808:        #     # ---------------------------------------------------------
+> pipeline\ai_pipeline.py:3809:        #     print("\n=== POST-REPAIR VALIDATION FAILED ===")
+  pipeline\ai_pipeline.py:3810:
+> pipeline\ai_pipeline.py:3811:        #     combined_issues = browser_issues + lint_issues
+  pipeline\ai_pipeline.py:3812:        #     primary_issue = combined_issues[0] if combined_issues else {}
+  pipeline\ai_pipeline.py:3813:
+  pipeline\ai_pipeline.py:3814:        #     deploy_diagnosis = {
+  pipeline\ai_pipeline.py:3815:        #         "category": primary_issue.get(
+  pipeline\ai_pipeline.py:3816:        #             "category",
+  pipeline\ai_pipeline.py:3818:        #         ),
+  pipeline\ai_pipeline.py:3819:        #         "root_cause": primary_issue.get(
+  pipeline\ai_pipeline.py:3820:        #             "type",
+> pipeline\ai_pipeline.py:3821:        #             "post_repair_validation_failed"
+  pipeline\ai_pipeline.py:3822:        #         ),
+  pipeline\ai_pipeline.py:3823:        #         "reason": primary_issue.get(
+  pipeline\ai_pipeline.py:3824:        #             "detail",
+> pipeline\ai_pipeline.py:3825:        #             "Post-repair browser or PHP validation failed."
+  pipeline\ai_pipeline.py:3826:        #         ),
+  pipeline\ai_pipeline.py:3827:        #         "confidence": 0.99,
+> pipeline\ai_pipeline.py:3828:        #         "repair_hint": (
+> pipeline\ai_pipeline.py:3829:        #             f"Fix {primary_issue.get('repair_target', repair_target)}."
+  pipeline\ai_pipeline.py:3830:        #         ),
+> pipeline\ai_pipeline.py:3831:        #         "repair_target": primary_issue.get(
+> pipeline\ai_pipeline.py:3832:        #             "repair_target",
+> pipeline\ai_pipeline.py:3833:        #             repair_target
+  pipeline\ai_pipeline.py:3834:        #         ),
+  pipeline\ai_pipeline.py:3835:        #     }
+  pipeline\ai_pipeline.py:3836:
+  pipeline\ai_pipeline.py:3837:            # raise RuntimeError(
+> pipeline\ai_pipeline.py:3838:            #     "Deploy completed but post-repair validation failed."
+  pipeline\ai_pipeline.py:3839:            # )
+  pipeline\ai_pipeline.py:3840:        raise RuntimeError("Deploy failed")
+  pipeline\ai_pipeline.py:3841:
+  pipeline\ai_pipeline.py:3842:def review_application(
+  pipeline\ai_pipeline.py:3843:    data: Dict[str, Any],
+  pipeline\ai_pipeline.py:3992:                    print(json.dumps(err, ensure_ascii=False))
+  pipeline\ai_pipeline.py:3993:
+  pipeline\ai_pipeline.py:3994:                if attempt >= MAX_VALIDATION_RETRY - 1:
+> pipeline\ai_pipeline.py:3995:                    print("Cross-file repair failed. Stop.")
+  pipeline\ai_pipeline.py:3996:                    break
+  pipeline\ai_pipeline.py:3997:
+  pipeline\ai_pipeline.py:3998:                available_files = [str(p.relative_to(SAFE_ROOT)).replace("\\", "/")
+ for p in php_files]
+> pipeline\ai_pipeline.py:3999:                repair_validation_errors(
+  pipeline\ai_pipeline.py:4000:                    cross_file_errors,
+  pipeline\ai_pipeline.py:4001:                    "",
+  pipeline\ai_pipeline.py:4002:                    "",
+  pipeline\ai_pipeline.py:4003:                    context["architecture"],
+  pipeline\ai_pipeline.py:4004:                    context["rules"],
+  pipeline\ai_pipeline.py:4015:            break
+  pipeline\ai_pipeline.py:4016:
+  pipeline\ai_pipeline.py:4017:        if attempt >= MAX_VALIDATION_RETRY - 1:
+> pipeline\ai_pipeline.py:4018:            print("PHP repair failed. Stop.")
+  pipeline\ai_pipeline.py:4019:            break
+  pipeline\ai_pipeline.py:4020:
+> pipeline\ai_pipeline.py:4021:        # Repair only failed PHP files
+> pipeline\ai_pipeline.py:4022:        repair_validation_errors(
+  pipeline\ai_pipeline.py:4023:            validation_errors,
+  pipeline\ai_pipeline.py:4024:            "\n".join(err.get("stdout", "") for err in validation_errors),
+  pipeline\ai_pipeline.py:4025:            "\n".join(err.get("stderr", "") for err in validation_errors),
+  pipeline\ai_pipeline.py:4026:            context["architecture"],
+  pipeline\ai_pipeline.py:4027:            context["rules"],
+  pipeline\ai_pipeline.py:4037:    # Deploy（Infrastructure の既存機構を再利用）
+  pipeline\ai_pipeline.py:4038:    # - SAFE_ROOT を Ansible Control Node に転送
+  pipeline\ai_pipeline.py:4039:    # - リモート検証（syntax-check）を行い、問題なければ deploy を実行
+> pipeline\ai_pipeline.py:4040:    # - デプロイ後に Browser Validation / PHP Lint を実行
+  pipeline\ai_pipeline.py:4041:    # Minimal change: re-use existing infra functions and commands.
+  pipeline\ai_pipeline.py:4042:    print("\n===== APPLICATION PIPELINE DEPLOY SEQUENCE START =====")
+  pipeline\ai_pipeline.py:4043:
+  pipeline\ai_pipeline.py:4044:    if validation_success:
+  pipeline\ai_pipeline.py:4045:        print("===== SCP TO ANSIBLE CONTROL NODE =====")
+  pipeline\ai_pipeline.py:4068:            return False
+  pipeline\ai_pipeline.py:4069:
+  pipeline\ai_pipeline.py:4070:
+> pipeline\ai_pipeline.py:4071:        print("\n===== BROWSER VALIDATION (application pipeline) =====")
+  pipeline\ai_pipeline.py:4072:        try:
+> pipeline\ai_pipeline.py:4073:            browser_result = run_browser_validation()
+> pipeline\ai_pipeline.py:4074:            print(json.dumps(browser_result, indent=2, ensure_ascii=False))
+  pipeline\ai_pipeline.py:4075:        except Exception as e:
+> pipeline\ai_pipeline.py:4076:            print("Browser validation failed:", e)
+  pipeline\ai_pipeline.py:4077:            return False
+  pipeline\ai_pipeline.py:4078:
+  pipeline\ai_pipeline.py:4079:        print("\n===== PHP LINT (application pipeline) =====")
+  pipeline\ai_pipeline.py:4080:        try:
+  pipeline\ai_pipeline.py:4081:            lint_result = run_php_lint()
+  pipeline\app_php_cross_file_test.py:10:    collect_php_includes,
+  pipeline\app_php_cross_file_test.py:11:    resolve_php_include_path,
+  pipeline\app_php_cross_file_test.py:12:    validate_php_cross_files,
+> pipeline\app_php_cross_file_test.py:13:    repair_validation_errors,
+  pipeline\app_php_cross_file_test.py:14:)
+  pipeline\app_php_cross_file_test.py:15:
+  pipeline\app_php_cross_file_test.py:16:
+  pipeline\app_php_cross_file_test.py:17:class PhpCrossFileValidationTest(unittest.TestCase):
+  pipeline\app_php_cross_file_test.py:18:    def test_collect_php_includes_simple_strings(self) -> None:
+  pipeline\app_php_cross_file_test.py:108:            errors = validate_php_cross_files([index_php], safe_root)
+  pipeline\app_php_cross_file_test.py:109:            self.assertEqual(errors, [])
+  pipeline\app_php_cross_file_test.py:110:
+> pipeline\app_php_cross_file_test.py:111:    def test_cross_file_error_triggers_repair_validation_errors(self) ->
+ None:
+  pipeline\app_php_cross_file_test.py:112:        with tempfile.TemporaryDirectory() as tmpdir:
+  pipeline\app_php_cross_file_test.py:113:            safe_root = Path(tmpdir) / "generated" / "files"
+  pipeline\app_php_cross_file_test.py:114:            src = safe_root / "src"
+  pipeline\app_php_cross_file_test.py:115:            src.mkdir(parents=True)
+  pipeline\app_php_cross_file_test.py:116:
+  pipeline\app_php_cross_file_test.py:131:                    self.assertEqual(context_data["available_php_files"]
+, available_files)
+  pipeline\app_php_cross_file_test.py:132:                    self.assertEqual(context_data["errors"], cross_file_
+errors)
+  pipeline\app_php_cross_file_test.py:133:                    self.assertEqual(context_data["errors"][0]["include_
+type"], "require_once")
+> pipeline\app_php_cross_file_test.py:134:                    return "<?php\n// repaired\n"
+  pipeline\app_php_cross_file_test.py:135:
+  pipeline\app_php_cross_file_test.py:136:                mock_regen.side_effect = fake_regen
+  pipeline\app_php_cross_file_test.py:137:
+> pipeline\app_php_cross_file_test.py:138:                repair_validation_errors(
+  pipeline\app_php_cross_file_test.py:139:                    cross_file_errors,
+  pipeline\app_php_cross_file_test.py:140:                    "",
+  pipeline\app_php_cross_file_test.py:141:                    "",
+  pipeline\app_php_cross_file_test.py:142:                    "",
+  pipeline\app_php_cross_file_test.py:143:                    "",
+  pipeline\app_php_cross_file_test.py:147:                )
+  pipeline\app_php_cross_file_test.py:148:                mock_regen.assert_called_once()
+  pipeline\app_php_cross_file_test.py:149:
+> pipeline\app_php_cross_file_test.py:150:    def test_application_pipeline_cross_file_repair_flow(self) -> None:
+  pipeline\app_php_cross_file_test.py:151:        with tempfile.TemporaryDirectory() as tmpdir:
+  pipeline\app_php_cross_file_test.py:152:            project_root = Path(tmpdir)
+  pipeline\app_php_cross_file_test.py:153:            safe_root = project_root / "generated" / "files"
+  pipeline\app_php_cross_file_test.py:154:            src = safe_root / "src"
+  pipeline\app_php_cross_file_test.py:155:            src.mkdir(parents=True)
+  pipeline\app_php_repair_test.py:8:
+  pipeline\app_php_repair_test.py:9:sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+  pipeline\app_php_repair_test.py:10:
+> pipeline\app_php_repair_test.py:11:from pipeline.ai_pipeline import run_local_php_lint, repair_validation_errors
+  pipeline\app_php_repair_test.py:12:from pipeline.config import SAFE_ROOT
+  pipeline\app_php_repair_test.py:13:
+  pipeline\app_php_repair_test.py:14:
+> pipeline\app_php_repair_test.py:15:class PhpRepairLoopTest(unittest.TestCase):
+> pipeline\app_php_repair_test.py:16:    def test_php_repair_loop_with_intentional_syntax_error(self) -> None:
+  pipeline\app_php_repair_test.py:17:        php_path = SAFE_ROOT / "src/index.php"
+  pipeline\app_php_repair_test.py:18:
+  pipeline\app_php_repair_test.py:19:        if not php_path.exists():
+  pipeline\app_php_repair_test.py:20:            self.skipTest(f"PHP file not found: {php_path}")
+  pipeline\app_php_repair_test.py:21:
+  pipeline\app_php_repair_test.py:38:                "stderr": lint_result.get("stderr", ""),
+  pipeline\app_php_repair_test.py:39:            }]
+  pipeline\app_php_repair_test.py:40:
+> pipeline\app_php_repair_test.py:41:            repair_validation_errors(
+  pipeline\app_php_repair_test.py:42:                validation_errors,
+  pipeline\app_php_repair_test.py:43:                lint_result.get("stdout", ""),
+  pipeline\app_php_repair_test.py:44:                lint_result.get("stderr", ""),
+  pipeline\app_php_repair_test.py:45:                architecture="",
+  pipeline\app_php_repair_test.py:46:                rules="",
+  pipeline\app_php_repair_test.py:49:                target_file_override="src/index.php",
+  pipeline\app_php_repair_test.py:50:            )
+  pipeline\app_php_repair_test.py:51:
+> pipeline\app_php_repair_test.py:52:            post_repair_result = run_local_php_lint(php_path)
+> pipeline\app_php_repair_test.py:53:            self.assertEqual(post_repair_result.get("exit_code"), 0, "PHP syn
+tax should be fixed after repair")
+> pipeline\app_php_repair_test.py:54:            print("PHP repair loop succeeded")
+  pipeline\app_php_repair_test.py:55:
+  pipeline\app_php_repair_test.py:56:        finally:
+  pipeline\app_php_repair_test.py:57:            if backup_path.exists():
+  pipeline\app_php_repair_test.py:58:                php_path.write_text(backup_path.read_text(encoding="utf-8"), 
+encoding="utf-8")
+  pipeline\app_php_repair_test.py:59:                backup_path.unlink()
+  pipeline\app_php_repair_test.py:60:
+> pipeline\app_php_repair_test.py:61:    def test_multiple_php_repair_loop_with_single_failure(self) -> None:
+  pipeline\app_php_repair_test.py:62:        index_path = SAFE_ROOT / "src/index.php"
+  pipeline\app_php_repair_test.py:63:        functions_path = SAFE_ROOT / "src/functions.php"
+  pipeline\app_php_repair_test.py:64:
+  pipeline\app_php_repair_test.py:65:        if not index_path.exists():
+  pipeline\app_php_repair_test.py:66:            self.skipTest(f"PHP file not found: {index_path}")
+  pipeline\app_php_repair_test.py:99:
+  pipeline\app_php_repair_test.py:100:                mock_regen.side_effect = fake_regen
+  pipeline\app_php_repair_test.py:101:
+> pipeline\app_php_repair_test.py:102:                repair_validation_errors(
+  pipeline\app_php_repair_test.py:103:                    validation_errors,
+  pipeline\app_php_repair_test.py:104:                    functions_result.get("stdout", ""),
+  pipeline\app_php_repair_test.py:105:                    functions_result.get("stderr", ""),
+  pipeline\app_php_repair_test.py:106:                    architecture="",
+  pipeline\app_php_repair_test.py:107:                    rules="",
+  pipeline\app_php_repair_test.py:114:            post_index_result = run_local_php_lint(index_path)
+  pipeline\app_php_repair_test.py:115:            post_functions_result = run_local_php_lint(functions_path)
+  pipeline\app_php_repair_test.py:116:
+> pipeline\app_php_repair_test.py:117:            self.assertEqual(post_index_result.get("exit_code"), 0, "index.p
+hp should still pass after repair")
+> pipeline\app_php_repair_test.py:118:            self.assertEqual(post_functions_result.get("exit_code"), 0, "fun
+ctions.php should pass after repair")
+> pipeline\app_php_repair_test.py:119:            self.assertTrue(functions_path.exists(), "functions.php should e
+xist after repair")
+  pipeline\app_php_repair_test.py:120:            self.assertEqual(functions_path.read_text(encoding="utf-8"), "<?
+php function foo() { echo 'hi'; }")
+> pipeline\app_php_repair_test.py:121:            print("Multiple PHP repair loop succeeded")
+  pipeline\app_php_repair_test.py:122:
+  pipeline\app_php_repair_test.py:123:        finally:
+  pipeline\app_php_repair_test.py:124:            if index_backup.exists():
+  pipeline\app_php_repair_test.py:125:                index_path.write_text(index_backup.read_text(encoding="utf-8
+"), encoding="utf-8")
+  pipeline\app_php_repair_test.py:126:                index_backup.unlink()
+  pipeline\config.py:51:        "category": "deployment",
+  pipeline\config.py:52:        "root_cause": "privileged_port",
+  pipeline\config.py:53:        "reason": "Rootless Podman cannot bind host port 80.",
+> pipeline\config.py:54:        "repair_hint": "Use host port >=1024."
+  pipeline\config.py:55:    }
+  pipeline\config.py:56:}
+  pipeline\config.py:57:
+  pipeline\config.py:58:TASK_SEQUENCE = [
+  pipeline\config.py:59:    "infrastructure.md",
+  pipeline\deploy.py:48:    evidence: Dict[str, Any],
+  pipeline\deploy.py:49:) -> Dict[str, Any]:
+  pipeline\deploy.py:50:    """
+> pipeline\deploy.py:51:    Deploy結果+解析証跡を解析し、Repair Planner向けの診断情報を返す。
+  pipeline\deploy.py:52:
+  pipeline\deploy.py:53:    Parameters
+  pipeline\deploy.py:54:    ----------
+  pipeline\deploy.py:55:    result:
+  pipeline\deploy.py:56:        deploy_pipeline() の戻り値
+  pipeline\deploy.py:63:            "root_cause": "...",
+  pipeline\deploy.py:64:            "reason": "...",
+  pipeline\deploy.py:65:            "confidence": 0.99,
+> pipeline\deploy.py:66:            "repair_hint": "..."
+  pipeline\deploy.py:67:        }
+  pipeline\deploy.py:68:    """
+  pipeline\deploy.py:69:
+  pipeline\deploy.py:70:    # -------------------------
+  pipeline\deploy.py:71:    # 成功でも実機確認する
+  pipeline\deploy.py:103:            "root_cause": "rootless_privileged_port",
+  pipeline\deploy.py:104:            "reason": stderr,
+  pipeline\deploy.py:105:            "confidence": 0.99,
+> pipeline\deploy.py:106:            "repair_hint": "Use port >=1024.",
+> pipeline\deploy.py:107:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:108:        }
+  pipeline\deploy.py:109:
+  pipeline\deploy.py:110:    if "unsupported parameters" in stderr_lower:
+  pipeline\deploy.py:111:        return {
+  pipeline\deploy.py:112:            "category": "ansible",
+  pipeline\deploy.py:113:            "root_cause": "unsupported_module_parameter",
+  pipeline\deploy.py:114:            "reason": stderr,
+  pipeline\deploy.py:115:            "confidence": 0.99,
+> pipeline\deploy.py:116:            "repair_hint": (
+  pipeline\deploy.py:117:                "Remove unsupported module parameters "
+  pipeline\deploy.py:118:                "from playbook.yml."
+  pipeline\deploy.py:119:            ),
+> pipeline\deploy.py:120:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:121:        }
+  pipeline\deploy.py:122:
+  pipeline\deploy.py:123:    if "missing required arguments" in stderr_lower:
+  pipeline\deploy.py:124:        return {
+  pipeline\deploy.py:125:            "category": "ansible",
+  pipeline\deploy.py:126:            "root_cause": "missing_required_argument",
+  pipeline\deploy.py:127:            "reason": stderr,
+  pipeline\deploy.py:128:            "confidence": 0.99,
+> pipeline\deploy.py:129:            "repair_hint": (
+  pipeline\deploy.py:130:                "Add required module arguments."
+  pipeline\deploy.py:131:            ),
+> pipeline\deploy.py:132:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:133:        }
+  pipeline\deploy.py:134:
+  pipeline\deploy.py:135:    for pattern, diagnosis in DEPLOY_ERROR_PATTERNS.items():
+  pipeline\deploy.py:136:        if pattern.lower() in stderr_lower:
+  pipeline\deploy.py:137:            return diagnosis.copy()
+  pipeline\deploy.py:142:            "root_cause": "ansible_playbook_failed",
+  pipeline\deploy.py:143:            "reason": stderr,
+  pipeline\deploy.py:144:            "confidence": 0.8,
+> pipeline\deploy.py:145:            "repair_hint": (
+  pipeline\deploy.py:146:                "Check ansible/playbook.yml and "
+  pipeline\deploy.py:147:                "podman logs for details."
+  pipeline\deploy.py:148:            ),
+> pipeline\deploy.py:149:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:150:        }
+  pipeline\deploy.py:151:
+  pipeline\deploy.py:152:    # -------------------------
+  pipeline\deploy.py:153:    # phpコンテナ存在チェック
+  pipeline\deploy.py:154:    # -------------------------
+  pipeline\deploy.py:163:                "was not created."
+  pipeline\deploy.py:164:            ),
+  pipeline\deploy.py:165:            "confidence": 0.95,
+> pipeline\deploy.py:166:            "repair_hint": (
+  pipeline\deploy.py:167:                "Review podman_container task "
+  pipeline\deploy.py:168:                "for php in ansible/playbook.yml."
+  pipeline\deploy.py:169:            ),
+> pipeline\deploy.py:170:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:171:        }
+  pipeline\deploy.py:172:
+  pipeline\deploy.py:173:    # -------------------------
+  pipeline\deploy.py:174:    # mysql存在チェック
+  pipeline\deploy.py:175:    # -------------------------
+  pipeline\deploy.py:183:                "mysql container was not created."
+  pipeline\deploy.py:184:            ),
+  pipeline\deploy.py:185:            "confidence": 0.95,
+> pipeline\deploy.py:186:            "repair_hint": (
+  pipeline\deploy.py:187:                "Review mysql podman_container task."
+  pipeline\deploy.py:188:            ),
+> pipeline\deploy.py:189:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:190:        }
+  pipeline\deploy.py:191:
+  pipeline\deploy.py:192:    # -------------------------
+  pipeline\deploy.py:193:    # curl結果確認
+  pipeline\deploy.py:194:    # -------------------------
+  pipeline\deploy.py:205:
+  pipeline\deploy.py:206:        return {
+  pipeline\deploy.py:207:            "category": "network",
+> pipeline\deploy.py:208:            "root_cause": "browser_connection_error",
+  pipeline\deploy.py:209:            "reason": curl_stderr,
+  pipeline\deploy.py:210:            "confidence": 0.8,
+> pipeline\deploy.py:211:            "repair_hint": (
+  pipeline\deploy.py:212:                "Check apache container, "
+  pipeline\deploy.py:213:                "pod publish and volume mount."
+  pipeline\deploy.py:214:            ),
+> pipeline\deploy.py:215:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:216:        }
+  pipeline\deploy.py:217:
+  pipeline\deploy.py:218:    curl_stdout = evidence.get(
+  pipeline\deploy.py:219:        "curl",
+  pipeline\deploy.py:220:        {}
+  pipeline\deploy.py:228:        return {
+  pipeline\deploy.py:229:            "category": "deployment",
+  pipeline\deploy.py:230:            "root_cause": "none",
+> pipeline\deploy.py:231:            "reason": "Browser validation succeeded.",
+  pipeline\deploy.py:232:            "confidence": 0.99,
+> pipeline\deploy.py:233:            "repair_hint": "",
+> pipeline\deploy.py:234:            "repair_target": "",
+  pipeline\deploy.py:235:        }
+  pipeline\deploy.py:236:
+  pipeline\deploy.py:237:def check_pod_state() -> dict:
+  pipeline\deploy.py:238:    """Deploy後のPod/Container状態を確認する。"""
+  pipeline\deploy.py:239:
+  pipeline\deploy.py:289:    }
+  pipeline\deploy.py:290:
+  pipeline\deploy.py:291:
+> pipeline\deploy.py:292:def run_browser_validation() -> Dict[str, Any]:
+  pipeline\deploy.py:293:    """デプロイ後のブラウザ検証を実行する。"""
+  pipeline\deploy.py:294:
+  pipeline\deploy.py:295:    url = "http://192.168.122.10:8080"
+  pipeline\deploy.py:296:
+  pipeline\deploy.py:297:    max_attempts = 10
+  pipeline\deploy.py:303:
+  pipeline\deploy.py:304:    for attempt in range(1, max_attempts + 1):
+  pipeline\deploy.py:305:        print(
+> pipeline\deploy.py:306:            f"Browser validation request "
+  pipeline\deploy.py:307:            f"(attempt {attempt}/{max_attempts})"
+  pipeline\deploy.py:308:        )
+  pipeline\deploy.py:309:
+  pipeline\deploy.py:310:        pod_state = check_pod_state()
+  pipeline\deploy.py:311:
+  pipeline\deploy.py:509:        "root_cause": "unknown",
+  pipeline\deploy.py:510:        "reason": "",
+  pipeline\deploy.py:511:        "confidence": 0.3,
+> pipeline\deploy.py:512:        "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:513:        "evidence": evidence
+  pipeline\deploy.py:514:    }
+  pipeline\deploy.py:515:
+  pipeline\deploy.py:516:    # -------------------------------
+  pipeline\deploy.py:517:    # Deploy自体が失敗
+  pipeline\deploy.py:526:                "root_cause": "pod_publish_error",
+  pipeline\deploy.py:527:                "reason": "Rootless Podman cannot expose privileged ports.",
+  pipeline\deploy.py:528:                "confidence": 0.99,
+> pipeline\deploy.py:529:                "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:530:                "evidence": evidence
+  pipeline\deploy.py:531:            })
+  pipeline\deploy.py:532:            return diagnosis
+  pipeline\deploy.py:533:
+  pipeline\deploy.py:534:        if "permission denied" in stderr:
+  pipeline\deploy.py:536:                "root_cause": "permission_error",
+  pipeline\deploy.py:537:                "reason": stderr,
+  pipeline\deploy.py:538:                "confidence": 0.95,
+> pipeline\deploy.py:539:                "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:540:                "evidence": evidence
+  pipeline\deploy.py:541:            })
+  pipeline\deploy.py:542:            return diagnosis
+  pipeline\deploy.py:543:
+  pipeline\deploy.py:544:    # -------------------------------
+  pipeline\deploy.py:564:            "root_cause": "container_not_running",
+  pipeline\deploy.py:565:            "reason": "PHP container does not exist.",
+  pipeline\deploy.py:566:            "confidence": 0.99,
+> pipeline\deploy.py:567:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:568:            "evidence": evidence
+  pipeline\deploy.py:569:        })
+  pipeline\deploy.py:570:
+  pipeline\deploy.py:571:        return diagnosis
+  pipeline\deploy.py:572:
+  pipeline\deploy.py:580:            "root_cause": "mysql_not_running",
+  pipeline\deploy.py:581:            "reason": "MySQL container does not exist.",
+  pipeline\deploy.py:582:            "confidence": 0.99,
+> pipeline\deploy.py:583:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:584:            "evidence": evidence
+  pipeline\deploy.py:585:        })
+  pipeline\deploy.py:586:
+  pipeline\deploy.py:587:        return diagnosis
+  pipeline\deploy.py:588:
+  pipeline\deploy.py:596:            "root_cause": "container_crashed",
+  pipeline\deploy.py:597:            "reason": "Container exited immediately.",
+  pipeline\deploy.py:598:            "confidence": 0.95,
+> pipeline\deploy.py:599:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:600:            "evidence": evidence
+  pipeline\deploy.py:601:        })
+  pipeline\deploy.py:602:
+  pipeline\deploy.py:603:        return diagnosis
+  pipeline\deploy.py:604:
+  pipeline\deploy.py:612:            "root_cause": "apache_not_started",
+  pipeline\deploy.py:613:            "reason": curl_stderr.strip(),
+  pipeline\deploy.py:614:            "confidence": 0.90,
+> pipeline\deploy.py:615:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:616:            "evidence": evidence
+  pipeline\deploy.py:617:        })
+  pipeline\deploy.py:618:
+  pipeline\deploy.py:619:        return diagnosis
+  pipeline\deploy.py:620:
+  pipeline\deploy.py:628:            "root_cause": "php_file_missing",
+  pipeline\deploy.py:629:            "reason": "index.php not found.",
+  pipeline\deploy.py:630:            "confidence": 0.90,
+> pipeline\deploy.py:631:            "repair_target": "src/index.php",
+  pipeline\deploy.py:632:            "evidence": evidence
+  pipeline\deploy.py:633:        })
+  pipeline\deploy.py:634:
+  pipeline\deploy.py:635:        return diagnosis
+  pipeline\deploy.py:636:
+  pipeline\deploy.py:640:            "root_cause": "php_runtime_error",
+  pipeline\deploy.py:641:            "reason": "PHP Internal Server Error.",
+  pipeline\deploy.py:642:            "confidence": 0.90,
+> pipeline\deploy.py:643:            "repair_target": "src/index.php",
+  pipeline\deploy.py:644:            "evidence": evidence
+  pipeline\deploy.py:645:        })
+  pipeline\deploy.py:646:
+  pipeline\deploy.py:647:        return diagnosis
+  pipeline\deploy.py:648:
+  pipeline\deploy.py:658:            "root_cause": "mysql_auth_failed",
+  pipeline\deploy.py:659:            "reason": mysql_logs.strip(),
+  pipeline\deploy.py:660:            "confidence": 0.98,
+> pipeline\deploy.py:661:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:662:            "evidence": evidence
+  pipeline\deploy.py:663:        })
+  pipeline\deploy.py:664:
+  pipeline\deploy.py:665:        return diagnosis
+  pipeline\deploy.py:666:
+  pipeline\deploy.py:670:            "root_cause": "mysql_connection_failed",
+  pipeline\deploy.py:671:            "reason": mysql_logs.strip(),
+  pipeline\deploy.py:672:            "confidence": 0.95,
+> pipeline\deploy.py:673:            "repair_target": "ansible/playbook.yml",
+  pipeline\deploy.py:674:            "evidence": evidence
+  pipeline\deploy.py:675:        })
+  pipeline\deploy.py:676:
+  pipeline\deploy.py:677:        return diagnosis
+  pipeline\deploy.py:678:
+  pipeline\deploy.py:688:            "root_cause": "php_fatal_error",
+  pipeline\deploy.py:689:            "reason": php_logs.strip(),
+  pipeline\deploy.py:690:            "confidence": 0.98,
+> pipeline\deploy.py:691:            "repair_target": "src/index.php",
+  pipeline\deploy.py:692:            "evidence": evidence
+  pipeline\deploy.py:693:        })
+  pipeline\deploy.py:694:
+  pipeline\deploy.py:695:        return diagnosis
+  pipeline\deploy.py:696:
+  pipeline\test_repair_prompt.py:69:    # IMPORTANT:
+  pipeline\test_repair_prompt.py:70:    # Do not allow the test to continue into file regeneration/write.
+  pipeline\test_repair_prompt.py:71:    raise RuntimeError(
+> pipeline\test_repair_prompt.py:72:        "TEST STOP: Ollama response captured; repaired file was NOT written."
+  pipeline\test_repair_prompt.py:73:    )
+  pipeline\test_repair_prompt.py:74:
+  pipeline\test_repair_prompt.py:75:ai_pipeline.ollama_chat = capture_ollama_chat
+  pipeline\test_repair_prompt.py:76:
+  pipeline\test_repair_prompt.py:77:
+  pipeline\test_repair_prompt.py:128:    print("No contract violations found.")
+  pipeline\test_repair_prompt.py:129:
+  pipeline\test_repair_prompt.py:130:print()
+> pipeline\test_repair_prompt.py:131:print("===== START REPAIR PROMPT CAPTURE =====")
+  pipeline\test_repair_prompt.py:132:
+  pipeline\test_repair_prompt.py:133:if not validation_errors:
+  pipeline\test_repair_prompt.py:134:    raise RuntimeError(
+  pipeline\test_repair_prompt.py:135:        "No contract violations found in the current playbook. "
+> pipeline\test_repair_prompt.py:136:        "The prompt capture test cannot reproduce a repair case."
+  pipeline\test_repair_prompt.py:137:    )
+  pipeline\test_repair_prompt.py:138:
+  pipeline\test_repair_prompt.py:139:try:
+> pipeline\test_repair_prompt.py:140:    ai_pipeline.repair_validation_errors(
+  pipeline\test_repair_prompt.py:141:        validation_errors,
+  pipeline\test_repair_prompt.py:142:        "",
+  pipeline\test_repair_prompt.py:143:        validation_stderr,
+  pipeline\test_repair_prompt.py:144:        context["architecture"],
+  pipeline\test_repair_prompt.py:145:        context["rules"],
+  pipeline\tmp_repro.py:22:    return '<?php function foo() { echo "hi"; }'
+  pipeline\tmp_repro.py:23:
+  pipeline\tmp_repro.py:24:ai.regenerate_file_with_context = fake_regen
+> pipeline\tmp_repro.py:25:ai.repair_validation_errors(
+  pipeline\tmp_repro.py:26:    validation_errors,
+  pipeline\tmp_repro.py:27:    '',
+  pipeline\tmp_repro.py:28:    '',
+  pipeline\tmp_repro.py:29:    architecture='',
+  pipeline\tmp_repro.py:30:    rules='',
+  pipeline\utility.py:14:    Optional,
+  pipeline\utility.py:15:)
+  pipeline\utility.py:16:
+> pipeline\utility.py:17:from json_repair import repair_json
+  pipeline\utility.py:18:
+  pipeline\utility.py:19:from config import (
+  pipeline\utility.py:20:    PROJECT_ROOT,
+  pipeline\utility.py:21:    CATEGORY_TO_TARGET,
+  pipeline\utility.py:22:)
+  pipeline\utility.py:62:    try:
+  pipeline\utility.py:63:        return json.loads(text)
+  pipeline\utility.py:64:    except json.JSONDecodeError:
+> pipeline\utility.py:65:        repaired = sanitize_json_string(repair_json(text))
+> pipeline\utility.py:66:        print("\n=== REPAIRED JSON ===")
+> pipeline\utility.py:67:        print(repaired[:1500])
+  pipeline\utility.py:68:        try:
+> pipeline\utility.py:69:            return json.loads(repaired)
+  pipeline\utility.py:70:        except json.JSONDecodeError as e:
+  pipeline\utility.py:71:            (PROJECT_ROOT / "logs").mkdir(exist_ok=True)
+> pipeline\utility.py:72:            (PROJECT_ROOT / "logs/broken_json.txt").write_text(repaired, encoding="utf-8"
+)
+> pipeline\utility.py:73:            raise RuntimeError(f"JSON repair failed: {e}")
+  pipeline\utility.py:74:
+  pipeline\utility.py:75:
+  pipeline\utility.py:76:def encode_b64(content: str) -> str:
+  pipeline\utility.py:77:    """UTF-8 でエンコードした文字列を base64 文字列で返す。"""
+  pipeline\utility.py:78:
+  pipeline\utility.py:158:    return run_command(["ssh", "-o", "BatchMode=yes", host, remote_command])
+  pipeline\utility.py:159:
+  pipeline\utility.py:160:
+> pipeline\utility.py:161:def repair_yaml_text(text: str) -> str:
+  pipeline\utility.py:162:    """軽微な YAML 破損を修復する。"""
+  pipeline\utility.py:163:
+  pipeline\utility.py:164:    text = re.sub(r"\{\{\s*([^\}]+)\s*\}\}", r"{{ \1 }}", text)
+  pipeline\utility.py:165:    text = re.sub(r"([^\n])(\s+[A-Za-z_][A-Za-z0-9_]*:)", r"\1\n\2", text)
+  pipeline\utility.py:166:    text = re.sub(r"(- name:[^\n]+)\s+([a-zA-Z0-9_.]+:)", r"\1\n  \2", text)
+  pipeline\utility.py:176:    return text.strip()
+  pipeline\utility.py:177:
+  pipeline\utility.py:178:
+> pipeline\utility.py:179:def repair_podman_yaml_content(content: str) -> str:
+  pipeline\utility.py:180:    """Podman/Ansible の生成誤りを自動修復する。"""
+  pipeline\utility.py:181:
+  pipeline\utility.py:182:    try:
+  pipeline\utility.py:183:        import yaml
+  pipeline\utility.py:184:
+  pipeline\utility.py:192:
+  pipeline\utility.py:193:        parsed = yaml.safe_load(content)
+  pipeline\utility.py:194:    except Exception as e:
+> pipeline\utility.py:195:        print("=== PODMAN YAML REPAIR SKIPPED: INVALID YAML ===")
+  pipeline\utility.py:196:        print(e)
+> pipeline\utility.py:197:        raise ValueError(f"Invalid YAML before Podman repair: {e}") from e
+  pipeline\utility.py:198:
+  pipeline\utility.py:199:    if not isinstance(parsed, (list, dict)):
+  pipeline\utility.py:200:        return content
+  pipeline\utility.py:201:
+  pipeline\utility.py:202:    pod_publish_ports: List[str] = []
+  pipeline\utility.py:280:
+  pipeline\utility.py:281:    return fixed_yaml
+  pipeline\utility.py:282:
+> pipeline\utility.py:283:def plan_repair(
+  pipeline\utility.py:284:    diagnosis,
+> pipeline\utility.py:285:    browser_result,
+> pipeline\utility.py:286:    browser_issues,
+  pipeline\utility.py:287:    lint_result,
+  pipeline\utility.py:288:    lint_issues,
+  pipeline\utility.py:289:    deploy_result,
+  pipeline\utility.py:290:    deploy_diagnosis,
+  pipeline\utility.py:291:):
+> pipeline\utility.py:292:    # 1. Browser issues からの repair_target 判定（RCA結果を最優先）
+> pipeline\utility.py:293:    for issue in browser_issues:
+> pipeline\utility.py:294:        target = issue.get("repair_target")
+  pipeline\utility.py:295:        if target:
+  pipeline\utility.py:296:            return target
+  pipeline\utility.py:297:        category = issue.get("category")
+  pipeline\utility.py:298:        if category and category in CATEGORY_TO_TARGET:
+  pipeline\utility.py:299:            return CATEGORY_TO_TARGET[category]
+  pipeline\utility.py:300:
+> pipeline\utility.py:301:    # 2. PHP lint issues から repair_target を判定
+  pipeline\utility.py:302:    for issue in lint_issues:
+> pipeline\utility.py:303:        target = issue.get("repair_target")
+  pipeline\utility.py:304:        if target:
+  pipeline\utility.py:305:            return target
+  pipeline\utility.py:306:
+  pipeline\utility.py:307:        category = issue.get("category")
+  pipeline\utility.py:308:        if category and category in CATEGORY_TO_TARGET:
+  pipeline\utility.py:310:
+  pipeline\utility.py:311:    # 3. deploy_diagnosis からの判定
+  pipeline\utility.py:312:    if deploy_diagnosis:
+> pipeline\utility.py:313:        target = deploy_diagnosis.get("repair_target")
+  pipeline\utility.py:314:        if target:
+  pipeline\utility.py:315:            return target
+  pipeline\utility.py:316:        category = deploy_diagnosis.get("category")
+  pipeline\utility.py:317:        if category and category in CATEGORY_TO_TARGET:
+  pipeline\utility.py:318:            return CATEGORY_TO_TARGET[category]
+
+

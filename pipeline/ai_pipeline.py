@@ -7,6 +7,7 @@ import os
 import re
 import time
 import subprocess
+import tempfile
 import urllib.request
 import urllib.error
 import yaml
@@ -152,6 +153,19 @@ def ollama_chat(
 
     message = response_data.get("message", {})
     content = message.get("content")
+    done_reason = response_data.get("done_reason")
+
+    print("OLLAMA DONE REASON =", done_reason)
+    print(
+        "OLLAMA MESSAGE LENGTH =",
+        len(content) if isinstance(content, str) else "N/A"
+    )
+
+    if done_reason == "length":
+        raise RuntimeError(
+            "Ollama response was truncated because "
+            "the maximum output length was reached."
+        )
 
     if not isinstance(content, str) or not content:
         raise RuntimeError(
@@ -296,7 +310,7 @@ def regenerate_file_with_context(
     rules: str,
     task_rules: str,
     format_rules: str,
-) -> str:
+) -> Optional[str]:
     """
     AI-driven file repair.
 
@@ -311,13 +325,24 @@ def regenerate_file_with_context(
     print(path)
 
     target = SAFE_ROOT / path
+
     repair_rules = (
         PROJECT_ROOT / "context/repair_rules.md"
     ).read_text(encoding="utf-8")
 
-    repair_prompt = (
-        PROJECT_ROOT / "prompts/repairer.txt"
-    ).read_text(encoding="utf-8")
+    # Target file type determines the Repair Agent prompt.
+    # PHP repair must not receive Infrastructure-specific rules.
+    if path.endswith(".php"):
+        repair_prompt = (
+            PROJECT_ROOT / "prompts/php_repairer.txt"
+        ).read_text(encoding="utf-8")
+    else:
+        repair_prompt = (
+            PROJECT_ROOT / "prompts/repairer.txt"
+        ).read_text(encoding="utf-8")
+
+
+    
 
     if not target.exists():
         raise FileNotFoundError(
@@ -391,22 +416,6 @@ def regenerate_file_with_context(
     --- BEGIN CURRENT FILE ---
     {current_file}
     --- END CURRENT FILE ---
-
-    REPAIR RULES:
-    {repair_rules}
-
-    Repair ONLY the reported contract violations.
-    Preserve all valid existing structure and content.
-    Do not redesign the file.
-    Do not add unrelated resources.
-    Do not change values that are not required by the reported violations.
-
-    Return exactly one JSON object.
-    The JSON object must contain exactly one key: content.
-    The value of content must be the complete repaired file content.
-    Do not return YAML directly.
-    Do not return Markdown.
-    Do not use code fences.
     """
 
     else:
@@ -441,61 +450,9 @@ def regenerate_file_with_context(
     {contract_text}
 
     CURRENT FILE:
+    --- BEGIN CURRENT FILE ---
     {current_file}
-
-    REPAIR RULES:
-Repair only the reported runtime problem.
-
-Preserve the existing file structure and every valid task.
-
-Do not delete, rename, reorder, or redesign existing tasks unless the reported problem directly requires that exact change.
-
-Do not replace valid Ansible module parameters with alternative parameter names.
-
-Do not replace valid literal values with Jinja expressions, environment lookups, or variables.
-
-Do not change hosts, task names, module names, images, volumes, env keys, command structure, or copy tasks unless the reported problem specifically requires that field to change.
-
-The smallest possible edit is required.
-
-Do not redesign the file.
-
-Do not add unrelated resources.
-
-Do not modify values that are not required to fix the reported runtime problem.
-
-The Infrastructure Contract values are authoritative.
-
-For PHP container environment variables, preserve the exact Deployment Contract values:
-db_host = mysql
-db_port = 3306
-db_name = testdb
-db_user = root
-db_password = secret
-
-Do not replace these values with Jinja expressions.
-
-Do not use environment variable lookups for these PHP environment values.
-
-Do not move these values to another container.
-
-Repair ONLY the reported problem.
-
-Return exactly one JSON object.
-
-The JSON object must contain exactly one key: content.
-
-The value of content must be the complete repaired file content.
-
-Do not return YAML directly.
-
-Do not return Markdown.
-
-Do not use code fences.
-
-Do not return explanations.
-
-Do not return analysis.
+    --- END CURRENT FILE ---
     """
 
 # repairのトークンチェック
@@ -507,9 +464,7 @@ Do not return analysis.
     print(f"Repair prompt length = {len(prompt):,} chars")
     print("Calling Ollama...")
 
-    system_prompt = (
-        PROJECT_ROOT / "prompts/repairer.txt"
-    ).read_text(encoding="utf-8")
+    system_prompt = repair_prompt
 
     raw = ollama_chat(
         messages=[
@@ -548,7 +503,10 @@ Do not return analysis.
                 extract_json(raw)
             )
         )
-    except Exception as e:
+    except ValueError as e:
+        if "Incomplete JSON response" in str(e):
+            print("Repair response was truncated by model output limit.")
+            return None
         raise RuntimeError(
             f"Repair response JSON parsing failed: {e}"
         ) from e
@@ -610,7 +568,7 @@ Do not return analysis.
 
     if repaired_file == current_file:
         print("Repair produced no file change.")
-        return current_file
+        return None
 
 
 
@@ -618,6 +576,118 @@ Do not return analysis.
     # Deterministic validation before writing
     # =========================================================
 
+    if path.endswith(".php"):
+        if not repaired_file.lstrip().startswith("<?php"):
+            raise RuntimeError(
+                f"Repair produced invalid PHP content: {path}"
+            )
+
+        original_length = len(current_file)
+        repaired_length = len(repaired_file)
+
+        if (
+            original_length >= 500
+            and repaired_length < original_length * 0.5
+        ):
+            raise RuntimeError(
+                "Repair produced unexpectedly small PHP file: "
+                f"{path}: "
+                f"original={original_length}, "
+                f"repaired={repaired_length}"
+            )
+
+
+        # =========================================================
+        # PHP structure preservation validation
+        # =========================================================
+        #
+        # Repair AI は既存ファイル全体を返す契約なので、
+        # Repair 前に存在した関数を勝手に削除してはいけない。
+        #
+        # PHP lint は「構文として正しいか」しか検証しないため、
+        # 既存関数の消失を決定論的に検出する。
+        # =========================================================
+
+        def extract_php_function_names(source: str) -> set[str]:
+            return set(
+                re.findall(
+                    r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                    source,
+                )
+            )
+
+        original_functions = extract_php_function_names(
+            current_file
+        )
+
+        repaired_functions = extract_php_function_names(
+            repaired_file
+        )
+
+        missing_functions = (
+            original_functions - repaired_functions
+        )
+
+        if missing_functions:
+            raise RuntimeError(
+                "Repair removed existing PHP function(s): "
+                f"{path}: "
+                + ", ".join(sorted(missing_functions))
+            )
+
+        # =========================================================
+        # PHP syntax validation before writing
+        # =========================================================
+        #
+        # Repair AI が途中で出力を終了した場合など、
+        # <?php から始まっていても不完全なPHPが生成される可能性がある。
+        #
+        # SAFE_ROOT の対象ファイルを上書きする前に、一時ファイルへ
+        # 修復候補を書き出して既存の php -l を実行する。
+        # =========================================================
+
+        temp_php_path = None
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                suffix=".php",
+                delete=False,
+            ) as temp_file:
+                temp_php_path = Path(temp_file.name)
+                temp_file.write(repaired_file)
+
+            lint_result = run_local_php_lint(temp_php_path)
+
+            if not lint_result.get("success", False):
+                print("===== REPAIR PHP LINT FAILED =====")
+                print(f"Target: {path}")
+                print(
+                    lint_result.get("stdout", "")
+                )
+                print(
+                    lint_result.get("stderr", "")
+                )
+
+                raise RuntimeError(
+                    "Repair produced invalid PHP syntax: "
+                    f"{path}\n"
+                    f"{lint_result.get('stdout', '')}"
+                    f"{lint_result.get('stderr', '')}"
+                )
+
+            print(
+                f"Repair PHP syntax validation passed: {path}"
+            )
+
+        finally:
+            if temp_php_path is not None:
+                try:
+                    temp_php_path.unlink()
+                except FileNotFoundError:
+                    pass
+                
     if path.endswith((".yml", ".yaml")):
         try:
             repaired_file = postprocess_regenerated_file_content(
@@ -775,7 +845,7 @@ def load_context(
 
     deployment_contract = {
         "web_url": "http://192.168.122.10:8080",
-        "db_host": "mysql",
+        "db_host": "127.0.0.1",
         "db_port": 3306,
         "db_name": "testdb",
         "db_user": "root",
@@ -1597,16 +1667,6 @@ REVIEW RULES:
 
 TASK REVIEW RULES:
 {context["task_review_rules"]}
-
-Repair the current generated JSON only for the supplied blocking review risks.
-
-Preserve all valid existing content.
-Do not change unrelated valid content.
-Do not add unrequested files.
-Do not remove required files.
-
-Return the complete corrected JSON object.
-Return JSON only.
 """
 
         retry_temp = max(0.05, 0.3 - (retry_count * 0.1))
@@ -1926,7 +1986,7 @@ def validate_infrastructure_playbook_contract(
     index_copy_found = False
 
     required_php_env = {
-        "db_host": "mysql",
+        "db_host": "127.0.0.1",
         "db_port": 3306,
         "db_name": "testdb",
         "db_user": "root",
@@ -2052,13 +2112,15 @@ def validate_infrastructure_playbook_contract(
 
                     parts = volume.split(":")
 
-                    if len(parts) >= 2:
+                    if len(parts) >= 3:
                         host_path = parts[0]
                         container_path = parts[1]
+                        selinux_mode = parts[2]
 
                         if (
                             host_path == required_host_html
                             and container_path == required_document_root
+                            and selinux_mode == "Z"
                         ):
                             php_volume_found = True
                             break
@@ -2114,7 +2176,7 @@ def validate_infrastructure_playbook_contract(
             "Infrastructure contract violation: "
             "PHP container must bind "
             "/home/vboxuser/containers/html "
-            "to /var/www/html."
+            "to /var/www/html with :Z."
         )
 
     if not index_copy_found:
@@ -2185,17 +2247,6 @@ def analyze_browser_validation(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
             "repair_target": "ansible/playbook.yml",
         })
 
-    elif payload.get("success") is False and not (
-        isinstance(status, int) and status >= 400
-    ):
-        issues.append({
-            "type": "browser_connection_error",
-            "category": "infrastructure",
-            "severity": "blocker",
-            "detail": payload.get("stderr", "Browser validation failed"),
-            "repair_target": "ansible/playbook.yml",
-        })
-
     if isinstance(status, int) and status >= 400:
         issues.append({
             "type": "browser_status",
@@ -2205,13 +2256,75 @@ def analyze_browser_validation(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
             "repair_target": "src/index.php" if status == 404 else "ansible/playbook.yml",
         })
 
-    if isinstance(body, str) and ("fatal error" in body_text or "parse error" in body_text or "uncaught" in body_text):
+    elif payload.get("success") is False:
+        body_lower = body.lower() if isinstance(body, str) else ""
+
+        if (
+            "database environment variables are not set" in body_lower
+            or "database connection failed:" in body_lower
+            or "sqlstate[hy000]" in body_lower
+        ):
+            issues.append({
+                "type": "database_configuration_error",
+                "category": "application",
+                "severity": "blocker",
+                "detail": body,
+                "repair_target": "src/db.php",
+            })
+        elif status is None:
+            issues.append({
+                "type": "browser_connection_error",
+                "category": "infrastructure",
+                "severity": "blocker",
+                "message": "Browser validation could not connect to the application.",
+                "repair_target": "ansible/playbook.yml",
+            })
+        else:
+            issues.append({
+                "type": "browser_application_error",
+                "category": "application",
+                "severity": "blocker",
+                "detail": body,
+                "repair_target": "src/index.php",
+            })
+
+    if isinstance(body, str) and (
+        "fatal error" in body_text
+        or "parse error" in body_text
+        or "uncaught" in body_text
+        or "<b>warning</b>" in body_text
+        or "warning:" in body_text
+        or "undefined variable" in body_text
+        or "undefined index" in body_text
+        or "undefined array key" in body_text
+        or "foreach() argument must be of type" in body_text
+        ):
+        repair_target = "src/index.php"
+
+        # PHP runtime error に実際の発生ファイルが含まれている場合は、
+        # そのファイルを Repair 対象にする。
+        #
+        # 例:
+        #   /var/www/html/config.php:4
+        #   /var/www/html/config.php on line 4
+        match = re.search(
+            r"(?:/var/www/html/|"
+            r"(?:PHP\s+)?(?:Fatal error|Warning|Notice|Parse error).*?\b)"
+            r"([A-Za-z0-9_.-]+\.php)"
+            r"(?::\d+|\s+on\s+line\s+\d+|</b>\s+on\s+line\s+<b>\d+)",
+            body,
+            re.IGNORECASE,
+        )
+
+        if match:
+            repair_target = f"src/{match.group(1)}"
+
         issues.append({
             "type": "browser_body",
             "category": "application",
             "severity": "warning",
-            "detail": "Response body contains a PHP runtime or fatal error",
-            "repair_target": "src/index.php",
+            "detail": body,
+            "repair_target": repair_target,
         })
 
     content_type = headers.get("Content-Type") if isinstance(headers, dict) else None
@@ -2221,6 +2334,25 @@ def analyze_browser_validation(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
             "category": "application",
             "severity": "warning",
             "detail": "HTML response body is empty",
+            "repair_target": "src/index.php",
+        })
+
+    # Browser validation が失敗しているのに、
+    # 上記の解析で具体的なIssueを検出できなかった場合のfallback。
+    #
+    # これにより、
+    # success=False + status=200 + 未分類のアプリケーションエラー
+    # が「問題なし」として通過することを防ぐ。
+    if payload.get("success") is False and not issues:
+        issues.append({
+            "type": "browser_application_error",
+            "category": "application",
+            "severity": "blocker",
+            "detail": (
+                body
+                if isinstance(body, str) and body
+                else "Browser validation failed."
+            ),
             "repair_target": "src/index.php",
         })
 
@@ -2240,13 +2372,12 @@ def analyze_php_lint_result(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     if exit_code == 0:
         return issues
 
-    if combined:
-        combined_lower = combined.lower()
-
     if (
         "could not open input file" in combined_lower
         or "no container with name or id" in combined_lower
         or "no such container" in combined_lower
+        or "can only create exec sessions on running containers" in combined_lower
+        or "container state improper" in combined_lower
     ):
         issues.append({
             "type": "php_lint_infrastructure",
@@ -2263,6 +2394,30 @@ def analyze_php_lint_result(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
             "detail": combined or "PHP lint failed",
             "repair_target": "src/index.php",
         })
+
+    # PHP lint エラーの実際の発生ファイルを取得する。
+    # 例:
+    #   Errors parsing /var/www/html/db.php
+    #   PHP Parse error: ... in /var/www/html/db.php on line 16
+    repair_target = "src/index.php"
+
+    match = re.search(
+        r"/var/www/html/([A-Za-z0-9_.-]+\.php)"
+        r"(?:\s+on\s+line\s+\d+|:\d+)",
+        combined,
+        re.IGNORECASE,
+    )
+
+    if match:
+        repair_target = f"src/{match.group(1)}"
+
+    issues.append({
+        "type": "php_lint",
+        "category": "application",
+        "severity": "warning",
+        "detail": combined or "PHP lint failed",
+        "repair_target": repair_target,
+    })
 
     return issues
 
@@ -2372,8 +2527,97 @@ def validate_php_cross_files(
                     "message": "Referenced PHP file does not exist",
                 })
 
-    return errors
 
+    config_path = SAFE_ROOT / "src" / "config.php"
+    db_path = SAFE_ROOT / "src" / "db.php"
+
+    if config_path.exists() and db_path.exists():
+        config_content = config_path.read_text(encoding="utf-8")
+        db_content = db_path.read_text(encoding="utf-8")
+
+        config_returns_array = bool(
+            re.search(
+                r"\breturn\s*\[",
+                config_content
+            )
+        )
+
+        config_is_loaded = bool(
+            re.search(
+                r"\$config\s*=\s*require_once\s+__DIR__\s*\.\s*['\"]\/config\.php['\"]",
+                db_content
+            )
+        )
+
+        if config_returns_array and config_is_loaded:
+            function_match = re.search(
+                r"function\s+getPDO\s*\([^)]*\)\s*:\s*PDO\s*\{(.*?)(?=\n\})",
+                db_content,
+                re.DOTALL
+            )
+
+            if function_match:
+                function_body = function_match.group(1)
+
+                config_accessed_in_function = bool(
+                    re.search(
+                        r"\$config\s*\[[^\]]+\]",
+                        function_body
+                    )
+                )
+
+                has_global_config = bool(
+                    re.search(
+                        r"\bglobal\s+\$config\s*;",
+                        function_body
+                    )
+                )
+
+                if config_accessed_in_function and not has_global_config:
+                    errors.append({
+                        "type": "php_scope_error",
+                        "category": "application",
+                        "severity": "error",
+                        "target": "src/db.php",
+                        "message": (
+                            "db.php loads config.php into $config at file scope, "
+                            "but getPDO() accesses $config without importing it "
+                            "into the function scope."
+                        ),
+                    })
+
+    # PHP function-scope validation
+    for php_path in php_files:
+        if php_path.name != "db.php":
+            continue
+
+        content = php_path.read_text(encoding="utf-8")
+
+        if "$config = require_once" not in content:
+            continue
+
+        match = re.search(
+            r"function\s+getPDO\s*\([^)]*\)[^{]*\{(?P<body>.*?)\n\}",
+            content,
+            re.DOTALL,
+        )
+
+        if match:
+            body = match.group("body")
+
+            if "$config[" in body and "global $config;" not in body:
+                errors.append({
+                    "type": "php_scope",
+                    "file": str(
+                        php_path.relative_to(safe_root_resolved)
+                    ).replace("\\", "/"),
+                    "message": (
+                        "$config is defined at file scope but is accessed "
+                        "inside getPDO() without global $config;"
+                    ),
+                })
+
+    return errors
 
 def run_local_php_lint(php_path: Path) -> Dict[str, Any]:
     """ローカル環境で `php -l` を実行して構文チェックを行う。"""
@@ -2474,11 +2718,28 @@ def repair_validation_errors(
                 "name: lamp-pod",
             )
 
+            deterministic_content = deterministic_content.replace(
+                "/home/vboxuser/containers/html:/var/www/html",
+                "/home/vboxuser/containers/html:/var/www/html:Z",
+            )
+
         if deterministic_content != current_content:
             print("===== DETERMINISTIC CONTRACT REPAIR =====")
             print(f"Target: {target_file}")
-            print("Replace: container/pod_name: lamp-pod")
-            print("With:    name: lamp-pod")
+
+            if "container/pod_name: lamp-pod" in current_content:
+                print("Replace: container/pod_name: lamp-pod")
+                print("With:    name: lamp-pod")
+
+            if "/home/vboxuser/containers/html:/var/www/html" in current_content:
+                print(
+                    "Replace: "
+                    "/home/vboxuser/containers/html:/var/www/html"
+                )
+                print(
+                    "With:    "
+                    "/home/vboxuser/containers/html:/var/www/html:Z"
+                )
 
             safe_write_file(
                 safe_root,
@@ -3271,6 +3532,57 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
 
                 break
 
+            # Redeploy直後はPodがrunningでもPHP/MySQLの初期化が
+            # 完了していない場合があるため、HTTP応答を待つ。
+            browser_ready = False
+
+            for startup_attempt in range(12):
+                print(
+                    f"\n===== POST-DEPLOY STARTUP WAIT "
+                    f"({startup_attempt + 1}/12) ====="
+                )
+
+                startup_result = run_browser_validation()
+
+                if startup_result.get("success"):
+                    browser_ready = True
+                    break
+
+                if startup_attempt < 11:
+                    time.sleep(5)
+
+            if not browser_ready:
+                print("Application is not ready after redeploy.")
+
+                validation_success = False
+                break
+
+            # PHPコンテナの初期化完了を待つ。
+            # docker-php-ext-install pdo_mysql 実行中はHTTP検証を開始しない。
+            print("\n===== WAIT FOR APPLICATION STARTUP =====")
+
+            startup_ready = False
+
+            for startup_attempt in range(12):
+                startup_result = run_browser_validation()
+
+                if startup_result.get("success"):
+                    startup_ready = True
+                    print("Application startup check passed.")
+                    break
+
+                print(
+                    f"Application startup check failed "
+                    f"(attempt {startup_attempt + 1}/12)."
+                )
+
+                time.sleep(5)
+
+            if not startup_ready:
+                print("Application did not become ready after redeploy.")
+                validation_success = False
+                break
+
     if not validation_success and deploy_success:
         combined_issues = browser_issues + lint_issues
         primary_issue = combined_issues[0] if combined_issues else {}
@@ -3292,7 +3604,7 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
         print("Pipeline completed successfully")
         context["deployment_contract"].update({
             "web_url": "http://192.168.122.10:8080",
-            "db_host": "mysql",
+            "db_host": "127.0.0.1",
             "db_port": 3306,
             "db_name": "testdb",
             "db_user": "root",
@@ -3307,6 +3619,14 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
             indent=2,
             ensure_ascii=False
         ))
+
+        # Deploy自体が成功している場合は、
+        # Deploy失敗用のauto repairには入らない。
+        # Browser/PHP validation failureは上のvalidation repair loopで扱う。
+        if deploy_success:
+            raise RuntimeError(
+                "Deployment succeeded but post-deploy validation failed."
+            )
 
         repair_target: Optional[str] = None
 
@@ -3600,7 +3920,7 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
                 print("Pipeline completed successfully")
                 context["deployment_contract"].update({
                     "web_url": "http://192.168.122.10:8080",
-                    "db_host": "mysql",
+                    "db_host": "127.0.0.1",
                     "db_port": 3306,
                     "db_name": "testdb",
                     "db_user": "root",
@@ -3608,214 +3928,6 @@ def run_infrastructure_pipeline(context: Dict[str, Any], task_name: str, task: s
                 })
                 return True
 
-        # # Certain diagnosed root causes should trigger an automatic
-        # # repair attempt instead of immediately raising an exception.
-        # root = deploy_diagnosis.get("root_cause")
-        # auto_repair_root_causes = {
-        #     "browser_connection_error",
-        #     "browser_status",
-        #     "pod_not_running",
-        #     "apache_not_running",
-        #     "container_not_running",
-        #     "playbook_error",
-        #     "ansible_module_error",
-        # }
-
-        # if root in auto_repair_root_causes:
-        #     print(f"\n===== AUTO-REPAIR TRIGGERED FOR: {root} =====")
-
-        #     # Perform AI-driven repair of the diagnosed target (e.g. playbook)
-        #     file_to_repair = (
-        #         deploy_diagnosis.get("repair_target")
-        #         or "ansible/playbook.yml"
-        #     )
-
-        #     regeneration_context = {
-        #         "source": "deploy",
-        #         "errors": [deploy_diagnosis],
-        #         "stdout": deploy_result.get("stdout", ""),
-        #         "stderr": deploy_result.get("stderr", ""),
-        #         "evidence": deploy_evidence,
-        #         "diagnosis": deploy_diagnosis,
-        #     }
-
-        #     repair_attempts = 2
-        #     regenerated = None
-
-        #     for repair_attempt in range(repair_attempts):
-        #         try:
-        #             print(
-        #                 f"\n===== REGENERATE {file_to_repair} "
-        #                 f"USING AI (auto-repair {repair_attempt + 1}/{repair_attempts}) ====="
-        #             )
-
-        #             regenerated = regenerate_file_with_context(
-        #                 file_to_repair,
-        #                 context["architecture"],
-        #                 regeneration_context,
-        #                 context["rules"],
-        #                 context["task_rules"],
-        #                 context["format_rules"],
-        #             )
-
-        #             if regenerated is None:
-        #                 raise RuntimeError(
-        #                     f"Regeneration returned None: {file_to_repair}"
-        #                 )
-
-        #             safe_write_file(
-        #                 SAFE_ROOT,
-        #                 file_to_repair,
-        #                 regenerated,
-        #             )
-
-        #             print(
-        #                 "Regenerated file written to SAFE_ROOT:",
-        #                 file_to_repair,
-        #             )
-
-        #             break
-
-        #         except Exception as e:
-        #             print(
-        #                 f"Auto-repair attempt {repair_attempt + 1} failed: {e}"
-        #             )
-
-        #             if repair_attempt >= repair_attempts - 1:
-        #                 raise RuntimeError(
-        #                     f"Deploy auto repair failed while regenerating "
-        #                     f"{file_to_repair}: {e}"
-        #                 ) from e
-
-        #             print(
-        #                 "Retrying auto-repair with deterministic "
-        #                 "contract feedback..."
-        #             )
-
-
-        #     # Transfer repaired files to control node and redeploy
-        #     print("\n===== SCP TO ANSIBLE CONTROL NODE (auto-repair) =====")
-        #     run_command([
-        #         "scp",
-        #         "-r",
-        #         str(SAFE_ROOT),
-        #         f"{ANSIBLE_CONTROL_NODE}:/home/vboxuser/ai_driven/generated",
-        #     ])
-
-        #     print("===== REMOTE PLAYBOOK CHECK (auto-repair) =====")
-        #     print(run_remote_command(
-        #         ANSIBLE_CONTROL_NODE,
-        #         "cat /home/vboxuser/ai_driven/generated/files/ansible/playbook.yml"
-        #     ))
-
-        #     print("\n===== REMOVE OLD POD (auto-repair) =====")
-        #     run_remote_command(
-        #         EXECUTION_NODE,
-        #         "podman pod rm -f lamp-pod || true"
-        #     )
-
-        #     print("\n===== REDEPLOY AFTER AUTO-REPAIR =====")
-        #     deploy_result, deploy_evidence, deploy_diagnosis, deploy_success = (
-        #         perform_deploy_cycle()
-        #     )
-
-        #     print("===== PODMAN STATUS AFTER DEPLOY REPAIR =====")
-        #     print(run_remote_command(
-        #         EXECUTION_NODE,
-        #         "podman ps -a"
-        #     ))
-
-        #     if not deploy_success:
-        #         raise RuntimeError("Deploy failed after auto-repair.")
-
-        #     # ---------------------------------------------------------
-        #     # Auto-repair後も、Web/PHPの実動作を再検証する。
-        #     #
-        #     # Ansibleのreturn code == 0だけでは、
-        #     # Webアプリケーションが正常とは判断しない。
-        #     # ---------------------------------------------------------
-        #     print("\n===== POST-REPAIR BROWSER VALIDATION =====")
-        #     browser_result = run_browser_validation()
-        #     browser_issues = analyze_browser_validation(browser_result)
-
-        #     print(json.dumps(
-        #         browser_result,
-        #         indent=2,
-        #         ensure_ascii=False,
-        #     ))
-
-        #     print(
-        #         "Browser issues:",
-        #         json.dumps(browser_issues, ensure_ascii=False)
-        #     )
-
-        #     print("\n===== POST-REPAIR PHP LINT =====")
-        #     lint_result = run_php_lint()
-        #     lint_issues = analyze_php_lint_result(lint_result)
-
-        #     print(json.dumps(
-        #         lint_result,
-        #         indent=2,
-        #         ensure_ascii=False,
-        #     ))
-
-        #     print(
-        #         "PHP lint issues:",
-        #         json.dumps(lint_issues, ensure_ascii=False)
-        #     )
-
-        #     # ---------------------------------------------------------
-        #     # Web/PHPともに正常なら初めて成功。
-        #     # ---------------------------------------------------------
-        #     if not browser_issues and not lint_issues:
-        #         print("Pipeline completed successfully after auto-repair")
-
-        #         context["deployment_contract"].update({
-        #             "web_url": "http://192.168.122.10:8080",
-        #             "db_host": "mysql",
-        #             "db_port": 3306,
-        #             "db_name": "testdb",
-        #             "db_user": "root",
-        #             "db_password": "secret",
-        #         })
-
-        #         return True
-
-        #     # ---------------------------------------------------------
-        #     # Deploy自体は成功したが、実動作検証に失敗した。
-        #     # ここで成功扱いしてはいけない。
-        #     # ---------------------------------------------------------
-        #     print("\n=== POST-REPAIR VALIDATION FAILED ===")
-
-        #     combined_issues = browser_issues + lint_issues
-        #     primary_issue = combined_issues[0] if combined_issues else {}
-
-        #     deploy_diagnosis = {
-        #         "category": primary_issue.get(
-        #             "category",
-        #             "infrastructure"
-        #         ),
-        #         "root_cause": primary_issue.get(
-        #             "type",
-        #             "post_repair_validation_failed"
-        #         ),
-        #         "reason": primary_issue.get(
-        #             "detail",
-        #             "Post-repair browser or PHP validation failed."
-        #         ),
-        #         "confidence": 0.99,
-        #         "repair_hint": (
-        #             f"Fix {primary_issue.get('repair_target', repair_target)}."
-        #         ),
-        #         "repair_target": primary_issue.get(
-        #             "repair_target",
-        #             repair_target
-        #         ),
-        #     }
-
-            # raise RuntimeError(
-            #     "Deploy completed but post-repair validation failed."
-            # )
         raise RuntimeError("Deploy failed")
 
 def review_application(
@@ -4020,7 +4132,13 @@ def run_application_pipeline(
     # Minimal change: re-use existing infra functions and commands.
     print("\n===== APPLICATION PIPELINE DEPLOY SEQUENCE START =====")
 
-    if validation_success:
+    if not validation_success:
+        print("Skipping deploy: PHP validation did not succeed.")
+        return False
+
+    for attempt in range(MAX_VALIDATION_RETRY + 1):
+        print(f"\n===== APPLICATION DEPLOY / BROWSER VALIDATION ATTEMPT {attempt + 1} =====")
+
         print("===== SCP TO ANSIBLE CONTROL NODE =====")
         run_command([
             "scp",
@@ -4046,7 +4164,6 @@ def run_application_pipeline(
             print("Application Ansible deploy failed:", e)
             return False
 
-
         print("\n===== BROWSER VALIDATION (application pipeline) =====")
         try:
             browser_result = run_browser_validation()
@@ -4054,6 +4171,12 @@ def run_application_pipeline(
         except Exception as e:
             print("Browser validation failed:", e)
             return False
+
+        browser_issues = analyze_browser_validation(browser_result)
+        print(
+            "Browser validation issues:",
+            json.dumps(browser_issues, indent=2, ensure_ascii=False),
+        )
 
         print("\n===== PHP LINT (application pipeline) =====")
         try:
@@ -4063,12 +4186,168 @@ def run_application_pipeline(
             print("PHP lint (remote) failed:", e)
             return False
 
-    else:
-        print("Skipping deploy: PHP validation did not succeed.")
-        return False
+        lint_issues = analyze_php_lint_result(lint_result)
+        print(
+            "PHP lint issues:",
+            json.dumps(lint_issues, indent=2, ensure_ascii=False),
+        )
+
+        if not browser_result.get("success", False):
+            print(
+                "Application runtime validation failed."
+            )
+        elif not browser_issues and not lint_issues:
+            print("Application runtime validation passed.")
+            print("\n===== APPLICATION PIPELINE END =====")
+            return True
+
+        repair_target = None
+
+        # Browser validation failed without a structured issue.
+        # In that case the application entry point is the fallback repair target.
+        if (
+            not browser_result.get("success", False)
+            and not browser_issues
+            and not lint_issues
+        ):
+            repair_target = "src/index.php"
+            print(
+                "Browser validation failed without a structured issue."
+            )
+            print(
+                "Fallback application repair target:",
+                repair_target,
+            )
+
+        browser_issue_priority = {
+            "browser_body": 0,
+            "browser_status": 1,
+            "browser_application_error": 2,
+        }
+
+        application_browser_issues = []
+
+        for issue in browser_issues:
+            if not isinstance(issue, dict):
+                continue
+
+            candidate = issue.get("repair_target")
+            category = issue.get("category")
+
+            if (
+                category == "application"
+                and isinstance(candidate, str)
+                and candidate.startswith("src/")
+            ):
+                application_browser_issues.append(issue)
+
+
+        def browser_issue_sort_key(issue):
+            issue_type = issue.get("type")
+
+            if not isinstance(issue_type, str):
+                return 99
+
+            return browser_issue_priority.get(issue_type, 99)
+
+
+        application_browser_issues.sort(
+            key=browser_issue_sort_key
+        )
+
+        for issue in application_browser_issues:
+            candidate = issue.get("repair_target")
+
+            if isinstance(candidate, str) and candidate.startswith("src/"):
+                repair_target = candidate
+                break
+
+
+        if repair_target is None:
+            for issue in lint_issues:
+                if not isinstance(issue, dict):
+                    continue
+
+                candidate = issue.get("repair_target")
+
+                if (
+                    isinstance(candidate, str)
+                    and candidate.startswith("src/")
+                ):
+                    repair_target = candidate
+                    break
+
+
+        if repair_target is None:
+            print("Application pipeline cannot determine an application repair target.")
+            print(
+                "Browser issues:",
+                json.dumps(browser_issues, indent=2, ensure_ascii=False),
+            )
+            print(
+                "PHP lint issues:",
+                json.dumps(lint_issues, indent=2, ensure_ascii=False),
+            )
+            return False
+
+        error_list = []
+
+        for issue in browser_issues + lint_issues:
+            candidate = issue.get("repair_target")
+
+            if candidate == repair_target:
+                error_list.append(
+                    {
+                        "type": issue.get("type", "validation_error"),
+                        "file": repair_target,
+                        "stderr": issue.get("detail", ""),
+                    }
+                )
+
+        print("\n===== APPLICATION REPAIR =====")
+        print("Repair target:", repair_target)
+        print(
+            "Repair errors:",
+            json.dumps(error_list, indent=2, ensure_ascii=False),
+        )
+
+        repaired_files = repair_validation_errors(
+            error_list,
+            browser_result.get("stdout", "")
+            + "\n"
+            + lint_result.get("stdout", ""),
+            browser_result.get("stderr", "")
+            + "\n"
+            + lint_result.get("stderr", ""),
+            context["architecture"],
+            context["rules"],
+            context["task_rules"],
+            context["format_rules"],
+            SAFE_ROOT,
+            target_file_override=repair_target,
+            available_php_files=[
+                str(p.relative_to(SAFE_ROOT)).replace("\\", "/")
+                for p in discover_php_files(SAFE_ROOT)
+            ],
+            deployment_contract=context.get("deployment_contract", {}),
+        )
+
+        if not repaired_files:
+            print("Application repair did not modify any file.")
+            break
+
+        print(
+            "Application repaired files:",
+            json.dumps(
+                list(repaired_files.keys()),
+                indent=2,
+                ensure_ascii=False,
+            ),
+        )
 
     print("\n===== APPLICATION PIPELINE END =====")
-    return True
+    return False
+
 
 
 def main() -> None:

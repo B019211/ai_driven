@@ -26,7 +26,7 @@
           db_user: root
           db_password: secret
         volumes:
-          - /home/vboxuser/containers/html:/var/www/html
+          - /home/vboxuser/containers/html:/var/www/html:Z
 
     - name: Start MySQL container in lamp-pod
       containers.podman.podman_container:

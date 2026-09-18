@@ -394,7 +394,10 @@ def run_php_lint() -> Dict[str, Any]:
     """デプロイされたPHPファイルの構文チェックを実行する。"""
 
     remote_cmd = (
-        "podman exec php php -l /var/www/html/index.php"
+        "podman exec php sh -c "
+        "'for file in /var/www/html/*.php; do "
+        "php -l \"$file\" || exit 1; "
+        "done'"
     )
 
     code, stdout, stderr = run_remote_command(
@@ -408,6 +411,9 @@ def run_php_lint() -> Dict[str, Any]:
         "stdout": stdout or "",
         "stderr": stderr or "",
     }
+
+
+
 
 def collect_deploy_evidence():
 

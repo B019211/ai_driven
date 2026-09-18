@@ -63,6 +63,8 @@ def safe_json_loads(text: str) -> Dict[str, Any]:
         return json.loads(text)
     except json.JSONDecodeError:
         repaired = sanitize_json_string(repair_json(text))
+        print("JSON INPUT LENGTH =", len(text))
+        print("JSON REPAIRED LENGTH =", len(repaired))
         print("\n=== REPAIRED JSON ===")
         print(repaired[:1500])
         try:
